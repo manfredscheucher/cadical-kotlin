@@ -5,38 +5,38 @@ import org.bytefred.ksat.SatSolver
 import org.bytefred.ksat.Traceable
 
 /**
- * Faithful Kotlin port of the CORE CDCL solver of CaDiCaL (MIT, (c) 2016-2024 Armin Biere
- * and the CaDiCaL authors), with ALL inprocessing disabled -> plain, deterministic,
- * trace-matchable CDCL. See ../shadow/cadical-c/cadical_trace.cc for the self-contained
- * instrumented C reference this is transcribed from 1:1.
+ * Kotlin port of CaDiCaL's core CDCL solver by Manfred Scheucher, 2026.
+ * Upstream CaDiCaL: MIT, (c) 2016-2024 Armin Biere and contributors.
  *
- * What is ported (the CDCL core, exactly as the C reference documents):
+ * Only the CDCL core is ported, with all inprocessing off, so the run is plain and
+ * deterministic and can be shadow-tested against the C. The instrumented reference is
+ * ../shadow/cadical-c/cadical_trace.cc; the code follows its structure, not idiomatic Kotlin,
+ * so the two line up.
+ *
+ * Ported (as the C reference documents each part):
  *   - watched literals with blocking literals and Ian Gent's saved-position search
  *     (propagate.cpp);
- *   - conflict analysis via CaDiCaL's 'open'-counter 1st-UIP loop over the trail
- *     (analyze.cpp), glue/LBD = number of distinct decision levels touched - 1;
- *   - recursive conflict-clause minimization with poison/removable/keep flags
- *     (minimize.cpp, opts.minimize=1);
- *   - EVSIDS variable scores in a binary max-heap used in STABLE mode, plus the VMTF
- *     'bumped' decision queue used in FOCUSED mode (score.cpp/queue.hpp);
- *   - ADAM-style bias-corrected exponential moving averages of the glue (ema.cpp),
- *     driving Glucose-style restarts; stabilizing phases toggle stable/focused with
- *     reluctant (Luby) doubling restarts in stable mode (restart.cpp);
- *   - LBD-tiered reduce keeping tier1 (glue<=2) and recently-used tier2 (glue<=6),
- *     sorting the rest by (glue,size) and dropping a reducetarget fraction (reduce.cpp);
+ *   - 1st-UIP conflict analysis via CaDiCaL's 'open'-counter loop over the trail
+ *     (analyze.cpp); glue/LBD = distinct decision levels touched - 1;
+ *   - recursive clause minimization with poison/removable/keep flags (minimize.cpp);
+ *   - EVSIDS scores in a binary max-heap (stable mode) and the VMTF 'bumped' queue
+ *     (focused mode) (score.cpp/queue.hpp);
+ *   - bias-corrected EMAs of the glue (ema.cpp) driving Glucose restarts; stabilizing
+ *     phases toggle stable/focused, with reluctant (Luby) doubling in stable mode
+ *     (restart.cpp);
+ *   - LBD-tiered reduce: keep tier1 (glue<=2) and recently-used tier2 (glue<=6), sort the
+ *     rest by (glue,size), drop a fraction (reduce.cpp);
  *   - phase saving with target/best phases updated on backtrack (backtrack.cpp, phases.cpp).
  *
- * DISABLED (documented core configuration, so C and Kotlin match): chronological
- * backtracking, on-the-fly self-subsumption, clause shrinking beyond recursive minimize,
- * proofs, rephasing, and all inprocessing. See the C reference header for the full list.
+ * Off (so C and Kotlin match): chronological backtracking, on-the-fly self-subsumption,
+ * clause shrinking beyond recursive minimize, proofs, rephasing, and all inprocessing.
+ * The C reference header lists the full set.
  *
- * FLOATING POINT: the C reference stores EVSIDS scores (`stab`) and the glue EMAs as
- * `double`. Kotlin/JVM `Double` is IEEE-754 identical to C `double`, and every score/EMA
- * update here is transcribed in the same evaluation order, so L1 (byte-for-byte trace)
- * is expected to hold. Precision is exposed as a knob for the same reason MiniSat exposes
- * it: [ActivityPrecision.FLOAT64] matches the C reference (default), [ActivityPrecision.FLOAT32]
- * rounds every score write via toFloat().toDouble() (for a hypothetical float build / standalone
- * experiments). Not idiomatic Kotlin on purpose -- correspondence to the C beats idiom.
+ * Floating point: EVSIDS scores (`stab`) and the glue EMAs are `double`. JVM `Double` is
+ * IEEE-754, the same as C's, and every score/EMA update runs in the same order, so the trace
+ * matches at L1 (byte-for-byte). Precision is a knob, as in MiniSat: [ActivityPrecision.FLOAT64]
+ * matches the C reference (default); [ActivityPrecision.FLOAT32] rounds every score write via
+ * toFloat().toDouble(), for a hypothetical float build or standalone experiments.
  */
 enum class ActivityPrecision { FLOAT32, FLOAT64 }
 
