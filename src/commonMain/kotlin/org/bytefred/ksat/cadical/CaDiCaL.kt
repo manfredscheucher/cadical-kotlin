@@ -6,7 +6,8 @@ import org.bytefred.ksat.Traceable
 
 /**
  * Kotlin port of CaDiCaL's core CDCL solver by Manfred Scheucher, 2026.
- * Upstream CaDiCaL: MIT, (c) 2016-2024 Armin Biere and contributors.
+ * Upstream CaDiCaL: 2.1.3 (github.com/arminbiere/cadical, VERSION 2.1.3,
+ * master @ f13d74439a5b5c963ac5b02d05ce93a8098018b8); MIT, (c) 2016-2024 Armin Biere and contributors.
  *
  * Only the CDCL core is ported, with all inprocessing off, so the run is plain and
  * deterministic and can be shadow-tested against the C. The instrumented reference is
