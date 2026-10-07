@@ -530,7 +530,7 @@ class CaDiCaL(
         var reason = reasonIn
         val litLevel: Int
         if (reason == CREF_NONE) {
-            litLevel = 0 // unit
+            litLevel = 0 // unit: always fixed at level 0 (makes a post-solve added unit survive backtrack(0); see addClauseInternal)
         } else if (reason == CREF_DECISION) {
             litLevel = level
             reason = CREF_NONE
@@ -1206,6 +1206,12 @@ class CaDiCaL(
     // =========================================================================
     private val addBuf = IntArrayList()
     private fun addClauseInternal(raw: IntArray): Boolean {
+        // Process original clauses at the root, as upstream add_new_original_clause does
+        // (clause.cpp: `if (level) backtrack();`). Adding a clause while a previous solve left a
+        // level>0 trail would otherwise place a unit at the wrong trail position (past the
+        // level-0 cut) so backtrack(0) later unassigns it and the fixed literal is lost; the
+        // root-false / taut checks below also rely on vLevel being the real root level.
+        if (level > 0) backtrack(0)
         addBuf.clear()
         var taut = false
         for (lit in raw) {
@@ -1239,6 +1245,13 @@ class CaDiCaL(
     // =========================================================================
     private fun solveLoop(): Int {
         if (unsat) { tr("RESULT UNSAT"); return 20 }
+        // Restore to the root before (re-)solving, as upstream already_solved() does
+        // (internal.cpp: backtrack to level 0, then propagate). A previous solve may have
+        // returned SAT with a dirty level>0 trail; without this a clause added since then
+        // would be examined over a stale trail instead of as a normal root propagation.
+        // backtrack(0) also clamps `propagated` to the level-0 trail, so the propagate()
+        // below re-scans the new clause at level 0.
+        if (level > 0) backtrack(0)
         initAverages()
         averagesSwapped = false
         if (!propagate()) {
