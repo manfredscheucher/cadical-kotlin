@@ -265,6 +265,16 @@ class CaDiCaL(
     private var keepFlag = signedCharArray(1)
     private val minimized = IntArrayList()
 
+    // failed-assumption core (IPASIR failed(), assume.cpp failing()). Per-variable bitmask
+    // with upstream `bign` semantics: bit value 1 == positive phase failed, 2 == negative
+    // phase failed (bign(lit) = 1 + (lit<0)). Computed eagerly at the UNSAT-under-assumptions
+    // exit (see solveLoop) because solve() rolls the trail back to level 0 right after, which
+    // would destroy the level/reason state failing() needs. `failingSeen` is BFS scratch,
+    // cleared after use. `failedValid` guards failed() against stale/absent cores.
+    private var failedBits = signedCharArray(1)
+    private var failingSeen = signedCharArray(1)
+    private var failedValid = false
+
     // averages / restarts / reduce
     private var glueFast = Ema()
     private var glueSlow = Ema()
@@ -421,6 +431,8 @@ class CaDiCaL(
         removable = removable.copyOf(n)
         poison = poison.copyOf(n)
         keepFlag = keepFlag.copyOf(n)
+        failedBits = failedBits.copyOf(n)
+        failingSeen = failingSeen.copyOf(n)
     }
 
     private fun newVar() {
@@ -441,6 +453,8 @@ class CaDiCaL(
         removable[idx] = 0
         poison[idx] = 0
         keepFlag[idx] = 0
+        failedBits[idx] = 0
+        failingSeen[idx] = 0
         // register in both structures (queue always, heap always) so both modes work
         initEnqueue(idx)
         heapPush(idx)
@@ -732,6 +746,101 @@ class CaDiCaL(
             }
         }
         levelsSeen.clear()
+    }
+
+    // =========================================================================
+    // failing assumptions / IPASIR failed() core (assume.cpp Internal::failing()).
+    //
+    // 1:1 translation of the NON-LRAT path of failing(). Proof/LRAT bookkeeping
+    // (proof, lrat, lrat_chain, conclusion, conclude_unsat, marked_failed,
+    // check_learned_clause) is omitted as vacuous here, exactly as the port already
+    // omits chrono/ILB: this build has no proof. The external propagator path
+    // (external_reason / learn_external_reason_clause) is also omitted — there is no
+    // external propagator, so a reason is never external. The unsat_constraint branch
+    // is omitted — there is no constraint API. external->e2i / externalize is the
+    // identity map here (DIMACS var N == internal idx N), so elit == lit throughout.
+    //
+    // Runs EAGERLY at the UNSAT-under-assumptions exit while level/reason/trail are
+    // still intact (solve() rolls back to level 0 immediately after). The result is
+    // stored in failedBits and read later by failed(lit). `bit` uses upstream bign():
+    // bign(lit) = 1 + (lit<0), i.e. value 1 for a positive lit, 2 for a negative one.
+    // =========================================================================
+    private fun bign(lit: Int): Int = 1 + (if (lit < 0) 1 else 0)
+
+    private fun computeFailed() {
+        // Mirrors failing()'s classification loop (assume.cpp:102-156): walk the
+        // assumption stack, bucket each falsified assumption into one of three cases.
+        var failedUnit = 0
+        var failedClashing = 0
+        var firstFailed = 0
+        var failedLevel = Int.MAX_VALUE
+
+        for (lit in assumptions) {
+            if (valOfLit(lit) >= 0) continue
+            val idx = vidx(lit)
+            if (vLevel[idx] == 0) { failedUnit = lit; break }   // case (1)
+            if (failedClashing != 0) continue
+            if (vReason[idx] == CREF_NONE) {                    // case (2): no reason
+                failedClashing = lit
+            } else if (firstFailed == 0 || vLevel[idx] < failedLevel) { // case (3)
+                firstFailed = lit
+                failedLevel = vLevel[idx]
+            }
+        }
+
+        // Pick the failed assumption for whichever case triggered (assume.cpp:160-177).
+        val failed = when {
+            failedUnit != 0 -> failedUnit
+            failedClashing != 0 -> failedClashing
+            else -> firstFailed
+        }
+        // Upstream asserts `failed`: UNSAT under assumptions must have a failing one.
+        if (failed == 0) error("failing(): no failed assumption found despite UNSAT under assumptions")
+
+        // In any case mark 'failed' as a failed assumption (assume.cpp:172-177).
+        failedBits[vidx(failed)] = (failedBits[vidx(failed)].toInt() or bign(failed)).toByte()
+
+        // Case (1): root-level falsified unit assumption (assume.cpp:180-202).
+        if (failedUnit != 0) return
+
+        // Case (2): two clashing assumptions, also mark the negation (assume.cpp:205-218).
+        if (failedClashing != 0) {
+            failedBits[vidx(-failed)] = (failedBits[vidx(-failed)].toInt() or bign(-failed)).toByte()
+            return
+        }
+
+        // Case (3): BFS the implication graph from -first_failed until decisions
+        // (which are all assumptions) or units are reached (assume.cpp:225-311).
+        failingSeen[vidx(firstFailed)] = 1
+        val work = IntArrayList()
+        work.add(-firstFailed)
+
+        var next = 0
+        while (next < work.size) {
+            val lit = work[next++]
+            // assert(val(lit) > 0)
+            if (valOfLit(lit) <= 0) error("failing() BFS popped a non-true literal $lit")
+            val idx = vidx(lit)
+            if (vLevel[idx] == 0) continue
+            if (vReason[idx] != CREF_NONE) {
+                for (other in lits(vReason[idx])) {
+                    val oidx = vidx(other)
+                    if (failingSeen[oidx].toInt() != 0) continue
+                    failingSeen[oidx] = 1
+                    // assert(val(other) < 0)
+                    if (valOfLit(other) >= 0) error("failing() BFS reason literal $other is not false")
+                    work.add(-other)
+                }
+            } else {
+                // No reason => decision == assumption. Mark its failed bit.
+                failedBits[idx] = (failedBits[idx].toInt() or bign(lit)).toByte()
+            }
+        }
+
+        // clear_analyzed_literals() equivalent: reset the BFS scratch (assume.cpp:312).
+        // work[0] is -firstFailed and the rest are the -other lits, so vidx over `work`
+        // covers every var whose failingSeen bit was set.
+        for (t in 0 until work.size) failingSeen[vidx(work[t])] = 0
     }
 
     // =========================================================================
@@ -1244,6 +1353,10 @@ class CaDiCaL(
     // solve loop (internal.cpp cdcl_loop, inprocessing disabled)
     // =========================================================================
     private fun solveLoop(): Int {
+        // These two early UNSAT returns are root-level UNSAT independent of any assumptions
+        // (empty formula / root-propagation conflict), so no assumption is falsified on the
+        // trail: the failed-assumption core is empty and failed() stays all-false, which is the
+        // correct IPASIR answer here. Only the assumption-dependent UNSAT below runs computeFailed().
         if (unsat) { tr("RESULT UNSAT"); return 20 }
         // Restore to the root before (re-)solving, as upstream already_solved() does
         // (internal.cpp: backtrack to level 0, then propagate). A previous solve may have
@@ -1275,6 +1388,14 @@ class CaDiCaL(
             captureModel()
             tr("RESULT SAT")
         } else {
+            // Compute the failed-assumption core eagerly, while level/reason/trail are
+            // still intact (solve() backtracks to level 0 immediately after this returns).
+            // assume.cpp lazily calls failing() from failed(); here it must run before the
+            // rollback. Only meaningful under assumptions.
+            if (assumptions.isNotEmpty()) {
+                computeFailed()
+                failedValid = true
+            }
             tr("RESULT UNSAT")
         }
         return res
@@ -1308,6 +1429,10 @@ class CaDiCaL(
      */
     override fun solve(assumptions: IntArray): SatResult {
         this.assumptions = assumptions
+        // Drop any core from a previous UNSAT solve so a stale result can't leak into
+        // failed() (assume.cpp clears failed bits per incremental phase in reset_assumptions).
+        failedValid = false
+        for (i in 1..maxVar) failedBits[i] = 0
         val r = try {
             solveLoop()
         } finally {
@@ -1323,6 +1448,20 @@ class CaDiCaL(
         // (lazy, like the C reference); report false for it (a don't-care).
         if (v < 1 || v >= model.size) return false
         return model[v].toInt() > 0
+    }
+
+    /**
+     * IPASIR failed(): true iff the signed DIMACS assumption [lit] is in the failed core of
+     * the last UNSAT-under-assumptions solve (assume.cpp Internal::failed). The core is
+     * computed eagerly at the UNSAT exit (see solveLoop); here we just read the stored bit.
+     * Returns false (not throw) when the last solve was SAT or had no assumptions — IPASIR's
+     * failed() returns 0 in that case, and it is only meaningful after UNSAT under assumptions.
+     */
+    override fun failed(lit: Int): Boolean {
+        if (!failedValid) return false
+        val idx = vidx(lit)
+        if (idx < 1 || idx > maxVar) return false
+        return (failedBits[idx].toInt() and bign(lit)) != 0
     }
 }
 
