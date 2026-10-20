@@ -2,6 +2,9 @@ package org.bytefred.ksat.cadical
 
 import org.bytefred.ksat.ExternalPropagation
 import org.bytefred.ksat.ExternalPropagator
+import org.bytefred.ksat.FixedAssignmentListener
+import org.bytefred.ksat.FixedListening
+import org.bytefred.ksat.ForcedPhases
 import org.bytefred.ksat.OutBoolean
 import org.bytefred.ksat.SatResult
 import org.bytefred.ksat.SatSolver
@@ -33,7 +36,10 @@ import org.bytefred.ksat.Traceable
  *   - phase saving with target/best phases updated on backtrack (backtrack.cpp, phases.cpp);
  *   - IPASIR-UP external propagator (external_propagate.cpp + its hooks in analyze/minimize/
  *     assume/backtrack/decide/reduce/clause.cpp); every hook is guarded like upstream, so with
- *     no propagator connected the run (and the trace) is unchanged.
+ *     no propagator connected the run (and the trace) is unchanged;
+ *   - forced decision phases (Solver::phase/unphase, phases.cpp, decide.cpp) and the
+ *     FixedAssignmentListener (Solver::connect_fixed_listener, flags.cpp mark_fixed); with no
+ *     phase forced and no listener connected the run (and the trace) is unchanged.
  *
  * Off (so C and Kotlin match): chronological backtracking, on-the-fly self-subsumption,
  * clause shrinking beyond recursive minimize, proofs, rephasing, and all inprocessing.
@@ -59,7 +65,7 @@ class CaDiCaL(
     reduceIntInit: Long = 25L,
     restartIntInit: Long = 2L,
     stabilizeInit: Long = 1000L,
-) : SatSolver, Traceable, ExternalPropagation {
+) : SatSolver, Traceable, ExternalPropagation, FixedListening, ForcedPhases {
 
     // ---- options (core configuration; see the C reference header) ----
     private companion object {
@@ -260,6 +266,7 @@ class CaDiCaL(
     private var phaseSaved = signedCharArray(1)
     private var phaseTarget = signedCharArray(1)
     private var phaseBest = signedCharArray(1)
+    private var phaseForced = signedCharArray(1) // phases.forced (Solver::phase)
     private var targetAssigned = 0
     private var bestAssigned = 0
     private var noConflictUntil = 0
@@ -296,6 +303,7 @@ class CaDiCaL(
     // lucky phases / local search / lookahead / preprocessing set it, none of which exist here.
     // `did_external_prop` is not ported either: upstream only reads it in a backtrack assert.
     private var propagator: ExternalPropagator? = null   // External::propagator
+    private var fixedListener: FixedAssignmentListener? = null // External::fixed_listener
     private var externalProp = false
     private var externalPropIsLazy = true
     private var forcedBacktAllowed = false
@@ -463,6 +471,7 @@ class CaDiCaL(
         phaseSaved = phaseSaved.copyOf(n)
         phaseTarget = phaseTarget.copyOf(n)
         phaseBest = phaseBest.copyOf(n)
+        phaseForced = phaseForced.copyOf(n)
         seen = seen.copyOf(n)
         removable = removable.copyOf(n)
         poison = poison.copyOf(n)
@@ -487,6 +496,7 @@ class CaDiCaL(
         phaseSaved[idx] = 0
         phaseTarget[idx] = 0
         phaseBest[idx] = 0
+        phaseForced[idx] = 0
         seen[idx] = 0
         removable[idx] = 0
         poison[idx] = 0
@@ -579,9 +589,13 @@ class CaDiCaL(
     // =========================================================================
     // assign
     // =========================================================================
-    private fun assign(lit: Int, reasonIn: Int, rc: Char) {
+    // propagate.cpp search_assign; with [originalUnit] it is clause.cpp assign_original_unit
+    // (only addClauseInternal passes it). A learned unit (analyze: driving clause CREF_NONE)
+    // is a search_assign at level 0 and takes the learn_unit_clause route.
+    private fun assign(lit: Int, reasonIn: Int, rc: Char, originalUnit: Boolean = false) {
         val idx = vidx(lit)
         var reason = reasonIn
+        val fromExternal = reasonIn == CREF_EXTERNAL
         val litLevel: Int
         if (reason == CREF_NONE) {
             litLevel = 0 // unit: always fixed at level 0 (makes a post-solve added unit survive backtrack(0); see addClauseInternal)
@@ -598,11 +612,35 @@ class CaDiCaL(
         vTrail[idx] = trail.size
         vReason[idx] = actualReason
         numAssigned++
+        // search_assign: `if (!lit_level && !from_external) learn_unit_clause (lit);`
+        // (before set_val). assign_original_unit calls mark_fixed after the trail push instead.
+        if (!originalUnit && litLevel == 0 && !fromExternal) learnUnitClause(lit)
+        check(litLevel != 0 || !fromExternal) { "external propagation assigned at the root" } // propagate.cpp:146
         val tmp: Byte = if (lit < 0) (-1).toByte() else 1.toByte()
         vals[idx] = tmp
         phaseSaved[idx] = tmp
         trail.add(lit)
         tr("ASSIGN $lit reason=$rc")
+        if (originalUnit) markFixed(lit) // clause.cpp assign_original_unit
+    }
+
+    // analyze.cpp learn_unit_clause: the checker / LRAT unit ids / proof are not ported, which
+    // leaves mark_fixed.
+    private fun learnUnitClause(lit: Int) {
+        check(!unsat) { "learn_unit_clause: already unsat" } // analyze.cpp assert (!unsat)
+        markFixed(lit)
+    }
+
+    // flags.cpp mark_fixed: only the fixed-listener notification is ported (Flags status and
+    // the fixed/active stats do not exist here; Internal::fixed reads the root-level value).
+    // externalize is the identity (DIMACS var N == internal idx N).
+    private fun markFixed(lit: Int) {
+        val listener = fixedListener
+        if (listener != null) {
+            val elit = lit
+            check(elit != 0) { "mark_fixed: zero literal" } // flags.cpp assert (elit)
+            listener.notifyFixedAssignment(elit)
+        }
     }
 
     private fun newTrailLevel(lit: Int) {
@@ -1451,6 +1489,9 @@ class CaDiCaL(
     private fun decidePhase(idx: Int, target: Boolean): Int {
         val initialPhase = if (OPT_phase) 1 else -1
         var phase = 0
+        // `if (force_saved_phase) phase = phases.saved[idx];` omitted: only lucky/local search
+        // set force_saved_phase. opts.forcephase (default 0) is not ported either.
+        if (phase == 0) phase = phaseForced[idx].toInt() // swapped with opts.forcephase case!
         if (phase == 0 && target) phase = phaseTarget[idx].toInt()
         if (phase == 0) phase = phaseSaved[idx].toInt()
         if (phase == 0) phase = initialPhase
@@ -1575,12 +1616,13 @@ class CaDiCaL(
                 val idx = vidx(lit)
                 vLevel[idx] = 0
                 vReason[idx] = CREF_NONE
+                markFixed(lit) // clause.cpp: mark_fixed (clause[0])
                 return true
             }
             if (valOfLit(lit) < 0) backtrack(vLevel[vidx(lit)] - 1)
             handleExternalClause(CREF_NONE)
             // assign_original_unit: a root conflict learns the empty clause
-            assign(lit, CREF_NONE, 'U')
+            assign(lit, CREF_NONE, 'U', originalUnit = true)
             if (propagate()) return true
             unsat = true
             markedFailed = true // learn_empty_clause
@@ -1868,7 +1910,7 @@ class CaDiCaL(
                     if (tmp > realLevel) realLevel = tmp
                 }
                 if (vLevel[idx] != 0 && realLevel == 0) {
-                    // learn_unit_clause: only proof/stats/flags here
+                    learnUnitClause(lit) // build_chain_for_units / lrat_chain: no LRAT here
                     vReason[idx] = CREF_NONE
                 }
                 if (vLevel[idx] > realLevel) vLevel[idx] = realLevel
@@ -1892,6 +1934,7 @@ class CaDiCaL(
         if (level == 0) return
         if (res == CREF_NONE) {
             // new unit clause. For now just backtrack.
+            check(!forceNoBacktrack) { "handle_external_clause: unit with force_no_backtrack" } // upstream assert
             backtrack(0)
             return
         }
@@ -2244,6 +2287,51 @@ class CaDiCaL(
                 isObserved[eidx] = false
             }
         }
+    }
+
+    // =========================================================================
+    // Fixed-assignment listener (solver.cpp connect_fixed_listener /
+    // disconnect_fixed_listener). REQUIRE_VALID_STATE == not while solving.
+    // =========================================================================
+    override fun connectFixedListener(listener: FixedAssignmentListener) {
+        require(!solving) { "connectFixedListener: not allowed during solving" }
+        if (fixedListener != null) disconnectFixedListener()
+        fixedListener = listener
+        // Listeners are treated as real-time listeners, thus previously found fixed
+        // assignments are not sent out (solver.cpp).
+    }
+
+    override fun disconnectFixedListener() {
+        require(!solving) { "disconnectFixedListener: not allowed during solving" }
+        fixedListener = null
+    }
+
+    // =========================================================================
+    // Forced phases (solver.cpp / external.cpp / phases.cpp phase, unphase).
+    // REQUIRE_VALID_OR_SOLVING_STATE: also allowed during solving. e2i is the identity.
+    // =========================================================================
+    override fun phase(lit: Int) {
+        require(lit != 0 && lit != Int.MIN_VALUE) { "phase: invalid literal $lit" } // REQUIRE_VALID_LIT
+        // External::phase: internalize creates the variable if it is new
+        ensureVar(vidx(lit))
+        // Internal::phase
+        val idx = vidx(lit)
+        val oldForcedPhase = phaseForced[idx]
+        val newForcedPhase: Byte = if (lit < 0) (-1).toByte() else 1.toByte()
+        if (oldForcedPhase == newForcedPhase) return // forced phase remains
+        phaseForced[idx] = newForcedPhase
+    }
+
+    override fun unphase(lit: Int) {
+        require(lit != 0 && lit != Int.MIN_VALUE) { "unphase: invalid literal $lit" } // REQUIRE_VALID_LIT
+        // External::unphase: resetting the forced phase of an unused external is ignored
+        val eidx = vidx(lit)
+        if (eidx > maxVar) return
+        // Internal::unphase
+        val idx = eidx
+        val oldForcedPhase = phaseForced[idx]
+        if (oldForcedPhase.toInt() == 0) return // forced phase already reset
+        phaseForced[idx] = 0
     }
 
     // external.cpp: External::is_decision
