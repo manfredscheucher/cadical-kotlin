@@ -1,5 +1,8 @@
 package org.bytefred.ksat.cadical
 
+import org.bytefred.ksat.ExternalPropagation
+import org.bytefred.ksat.ExternalPropagator
+import org.bytefred.ksat.OutBoolean
 import org.bytefred.ksat.SatResult
 import org.bytefred.ksat.SatSolver
 import org.bytefred.ksat.Traceable
@@ -27,7 +30,10 @@ import org.bytefred.ksat.Traceable
  *     (restart.cpp);
  *   - LBD-tiered reduce: keep tier1 (glue<=2) and recently-used tier2 (glue<=6), sort the
  *     rest by (glue,size), drop a fraction (reduce.cpp);
- *   - phase saving with target/best phases updated on backtrack (backtrack.cpp, phases.cpp).
+ *   - phase saving with target/best phases updated on backtrack (backtrack.cpp, phases.cpp);
+ *   - IPASIR-UP external propagator (external_propagate.cpp + its hooks in analyze/minimize/
+ *     assume/backtrack/decide/reduce/clause.cpp); every hook is guarded like upstream, so with
+ *     no propagator connected the run (and the trace) is unchanged.
  *
  * Off (so C and Kotlin match): chronological backtracking, on-the-fly self-subsumption,
  * clause shrinking beyond recursive minimize, proofs, rephasing, and all inprocessing.
@@ -53,7 +59,7 @@ class CaDiCaL(
     reduceIntInit: Long = 25L,
     restartIntInit: Long = 2L,
     stabilizeInit: Long = 1000L,
-) : SatSolver, Traceable {
+) : SatSolver, Traceable, ExternalPropagation {
 
     // ---- options (core configuration; see the C reference header) ----
     private companion object {
@@ -78,6 +84,8 @@ class CaDiCaL(
         const val OPT_target = 1                // target phases (stable only)
         const val OPT_emagluefast = 33.0
         const val OPT_emaglueslow = 1e5
+        const val OPT_exteagerreasons = true    // eagerly ask for all reasons (upstream default 1)
+        const val OPT_exteagerrecalc = true     // recalculate levels after eager reasons (default 1)
     }
 
     private val OPT_stabilizeinit: Long = stabilizeInit
@@ -151,6 +159,7 @@ class CaDiCaL(
 
     private val CREF_NONE = -1
     private val CREF_DECISION = -2           // decision_reason sentinel
+    private val CREF_EXTERNAL = -3           // external_reason sentinel (reason not yet learned)
 
     private fun cEnsure(cap: Int) {
         if (cap <= cRedundant.size) return
@@ -274,6 +283,33 @@ class CaDiCaL(
     private var failedBits = signedCharArray(1)
     private var failingSeen = signedCharArray(1)
     private var failedValid = false
+    // solver.cpp state(): UNSATISFIED after a solve returned 20, until the next add/solve.
+    private var unsatisfiedState = false
+    // upstream `marked_failed` (internal.cpp ctor: true): decide() clears it when an assumption is
+    // falsified (decide.cpp), learning the empty clause sets it (analyze.cpp learn_empty_clause,
+    // clause.cpp falsified original). failing() only runs while it is false.
+    private var markedFailed = true
+
+    // IPASIR-UP state (internal.hpp / external.hpp). `relevantTab` is Internal::relevanttab
+    // (observation reference counts), `isObserved` is External::is_observed; with the identity
+    // e2i map both are indexed by the DIMACS variable. `private_steps` is not ported: only
+    // lucky phases / local search / lookahead / preprocessing set it, none of which exist here.
+    // `did_external_prop` is not ported either: upstream only reads it in a backtrack assert.
+    private var propagator: ExternalPropagator? = null   // External::propagator
+    private var externalProp = false
+    private var externalPropIsLazy = true
+    private var forcedBacktAllowed = false
+    private var newestClause = CREF_NONE
+    private var forceNoBacktrack = false
+    private var fromPropagator = false
+    private var extClauseForgettable = false
+    private val extClauseForgettableOut = OutBoolean()
+    private var notified = 0
+    private var relevantTab = IntArray(1)
+    private var isObserved = BooleanArray(1)
+    private val extOriginal = IntArrayList()  // Internal::original while reading an external clause
+    // Solver state SOLVING (REQUIRE_VALID_STATE vs REQUIRE_VALID_OR_SOLVING_STATE in solver.cpp).
+    private var solving = false
 
     // averages / restarts / reduce
     private var glueFast = Ema()
@@ -433,6 +469,8 @@ class CaDiCaL(
         keepFlag = keepFlag.copyOf(n)
         failedBits = failedBits.copyOf(n)
         failingSeen = failingSeen.copyOf(n)
+        relevantTab = relevantTab.copyOf(n)
+        isObserved = isObserved.copyOf(n)
     }
 
     private fun newVar() {
@@ -455,6 +493,8 @@ class CaDiCaL(
         keepFlag[idx] = 0
         failedBits[idx] = 0
         failingSeen[idx] = 0
+        relevantTab[idx] = 0
+        isObserved[idx] = false
         // register in both structures (queue always, heap always) so both modes work
         initEnqueue(idx)
         heapPush(idx)
@@ -549,7 +589,9 @@ class CaDiCaL(
             litLevel = level
             reason = CREF_NONE
         } else {
-            litLevel = level // no chrono: assignment level == current level
+            // no chrono: assignment level == current level (also for CREF_EXTERNAL, whose
+            // reason is unknown, exactly as upstream search_assign assumes)
+            litLevel = level
         }
         val actualReason = if (litLevel == 0) CREF_NONE else reason
         vLevel[idx] = litLevel
@@ -715,6 +757,12 @@ class CaDiCaL(
         val lv = vLevel[idx]
         if (lv == 0) return
         if (seen[idx].toInt() != 0) return
+        // analyze.cpp analyze_literal: learn a lazily explained external reason before marking
+        // (upstream asserts !opts.exteagerreasons here; with eager reasons it is not reached)
+        if (vReason[idx] == CREF_EXTERNAL) {
+            vReason[idx] = learnExternalReasonClause(-lit, 0, true)
+            if (vReason[idx] == CREF_NONE) return // actually a unit (no LRAT unit chain here)
+        }
         seen[idx] = 1
         analyzed.add(lit)
         if (lv < level) clause.add(lit)
@@ -752,12 +800,12 @@ class CaDiCaL(
     // failing assumptions / IPASIR failed() core (assume.cpp Internal::failing()).
     //
     // 1:1 translation of the NON-LRAT path of failing(). Proof/LRAT bookkeeping
-    // (proof, lrat, lrat_chain, conclusion, conclude_unsat, marked_failed,
-    // check_learned_clause) is omitted as vacuous here, exactly as the port already
-    // omits chrono/ILB: this build has no proof. The external propagator path
-    // (external_reason / learn_external_reason_clause) is also omitted — there is no
-    // external propagator, so a reason is never external. The unsat_constraint branch
-    // is omitted — there is no constraint API. external->e2i / externalize is the
+    // (proof, lrat, lrat_chain, conclusion, conclude_unsat, check_learned_clause) is
+    // omitted as vacuous here, exactly as the port already
+    // omits chrono/ILB: this build has no proof. The external_reason branches (an
+    // assumption or BFS literal propagated by the IPASIR-UP propagator whose reason is
+    // not learned yet) are translated. The unsat_constraint branch is omitted — there
+    // is no constraint API. external->e2i / externalize is the
     // identity map here (DIMACS var N == internal idx N), so elit == lit throughout.
     //
     // Runs EAGERLY at the UNSAT-under-assumptions exit while level/reason/trail are
@@ -780,6 +828,25 @@ class CaDiCaL(
             val idx = vidx(lit)
             if (vLevel[idx] == 0) { failedUnit = lit; break }   // case (1)
             if (failedClashing != 0) continue
+            if (vReason[idx] == CREF_EXTERNAL) {
+                vReason[idx] = learnExternalReasonClause(-lit, 0, false)
+                if (vReason[idx] == CREF_NONE) {
+                    vLevel[idx] = 0
+                    failedUnit = lit
+                    break
+                }
+                vLevel[idx] = 0
+                // Recalculate assignment level
+                for (other in lits(vReason[idx])) {
+                    if (other == -lit) continue
+                    val tmp = vLevel[vidx(other)]
+                    if (tmp > vLevel[idx]) vLevel[idx] = tmp
+                }
+                if (vLevel[idx] == 0) {
+                    failedUnit = lit
+                    break
+                }
+            }
             if (vReason[idx] == CREF_NONE) {                    // case (2): no reason
                 failedClashing = lit
             } else if (firstFailed == 0 || vLevel[idx] < failedLevel) { // case (3)
@@ -822,6 +889,15 @@ class CaDiCaL(
             if (valOfLit(lit) <= 0) error("failing() BFS popped a non-true literal $lit")
             val idx = vidx(lit)
             if (vLevel[idx] == 0) continue
+            if (vReason[idx] == CREF_EXTERNAL) {
+                // wrapped_learn_external_reason_clause: its clause/LRAT stashing is vacuous
+                // here (the add path uses its own buffer, no LRAT)
+                vReason[idx] = learnExternalReasonClause(lit, 0, true)
+                if (vReason[idx] == CREF_NONE) {
+                    vLevel[idx] = 0
+                    continue
+                }
+            }
             if (vReason[idx] != CREF_NONE) {
                 for (other in lits(vReason[idx])) {
                     val oidx = vidx(other)
@@ -856,6 +932,11 @@ class CaDiCaL(
         if (vTrail[idx] <= ctlSeenTrail[lv]) return false
         if (depth > OPT_minimizedepth) return false
         var res = true
+        // minimize.cpp: lazily explained external reason (upstream asserts !opts.exteagerreasons)
+        if (vReason[idx] == CREF_EXTERNAL) {
+            vReason[idx] = learnExternalReasonClause(lit, 0, true)
+            if (vReason[idx] == CREF_NONE) return true // became a root-level unit
+        }
         for (other in lits(vReason[idx])) {
             if (other == lit) continue
             res = minimizeLiteral(-other, depth + 1)
@@ -974,10 +1055,26 @@ class CaDiCaL(
         updateTargetAndBest()
         val assigned = ctlTrail[newLevel + 1]
         val end = trail.size
-        for (i in assigned until end) unassign(trail[i])
-        trail.shrinkTo(assigned)
+        var j = assigned
+        var reassigned = 0
+        notifyBacktrack(newLevel)
+        if (externalProp && !externalPropIsLazy && notified > assigned) notified = assigned
+        for (i in assigned until end) {
+            val lit = trail[i]
+            if (vLevel[vidx(lit)] > newLevel) {
+                unassign(lit)
+            } else {
+                // Out-of-order assigned literal kept on the trail. Without chrono this only
+                // happens with an external propagator (units learned during explanation).
+                trail[j] = lit
+                vTrail[vidx(lit)] = j++
+                reassigned++
+            }
+        }
+        trail.shrinkTo(j)
         if (propagated > assigned) propagated = assigned
         if (noConflictUntil > assigned) noConflictUntil = assigned
+        if (reassigned != 0) notifyAssignments()
         // control.resize(new_level + 1)
         val newSize = newLevel + 1
         ctlDecision.shrinkTo(newSize); ctlTrail.shrinkTo(newSize)
@@ -989,9 +1086,30 @@ class CaDiCaL(
     // analyze (analyze.cpp, no-chrono/no-otfs path)
     // =========================================================================
     private val analyzeOpen = IntArray(1)
+    private val analyzeForced = IntArray(1)
     private fun analyze() {
+        if (externalProp && !externalPropIsLazy && OPT_exteagerreasons) {
+            explainExternalPropagations()
+        }
+
+        // analyze.cpp: `if (opts.chrono || external_prop)`; chrono is off, so only the
+        // propagator enables finding the actual conflict level.
+        if (externalProp) {
+            val conflictLevel = findConflictLevel(analyzeForced)
+            val forced = analyzeForced[0]
+            if (forced != 0) {
+                // single highest level literal: reuse the conflict as driving clause
+                backtrack(conflictLevel - 1)
+                searchAssignDriving(forced, conflict)
+                conflict = CREF_NONE
+                return
+            }
+            backtrack(conflictLevel)
+        }
+
         if (level == 0) {
             unsat = true
+            markedFailed = true // learn_empty_clause
             conflict = CREF_NONE
             return
         }
@@ -1012,6 +1130,11 @@ class CaDiCaL(
             analyzeOpen[0]--
             if (analyzeOpen[0] == 0) break
             reason = vReason[vidx(uip)]
+            if (reason == CREF_EXTERNAL) {
+                // upstream asserts !opts.exteagerreasons here
+                reason = learnExternalReasonClause(-uip, 0, true)
+                vReason[vidx(uip)] = reason
+            }
         }
         clause.add(-uip)
 
@@ -1030,9 +1153,10 @@ class CaDiCaL(
         backtrack(jump)
 
         if (uip != 0) {
-            assign(-uip, driving, 'C')
+            searchAssignDriving(-uip, driving)
         } else {
             unsat = true
+            markedFailed = true // learn_empty_clause
         }
 
         if (stable) reluctantTick()
@@ -1043,6 +1167,51 @@ class CaDiCaL(
         conflict = CREF_NONE
 
         if (size == 1) iterating = true
+    }
+
+    // analyze.cpp: find_conflict_level. Determines the maximum level in the conflict, moves
+    // the two highest level literals to the watched positions and sets forced[0] to the
+    // single literal on that level (0 if there are several).
+    private fun findConflictLevel(forced: IntArray): Int {
+        val ls = lits(conflict)
+        var res = 0
+        var count = 0
+        forced[0] = 0
+        for (lit in ls) {
+            val tmp = vLevel[vidx(lit)]
+            if (tmp > res) {
+                res = tmp
+                forced[0] = lit
+                count = 1
+            } else if (tmp == res) {
+                count++
+                if (res == level && count > 1) break
+            }
+        }
+        val size = cSize[conflict]
+        for (i in 0 until 2) {
+            val lit = ls[i]
+            var highestPosition = i
+            var highestLiteral = lit
+            var highestLevel = vLevel[vidx(highestLiteral)]
+            for (j in i + 1 until size) {
+                val other = ls[j]
+                val tmp = vLevel[vidx(other)]
+                if (highestLevel >= tmp) continue
+                highestLiteral = other
+                highestPosition = j
+                highestLevel = tmp
+                if (highestLevel == res) break
+            }
+            // No unwatched higher assignment level literal.
+            if (highestPosition == i) continue
+            if (highestPosition > 1) removeWatch(lit, conflict)
+            ls[highestPosition] = lit
+            ls[i] = highestLiteral
+            if (highestPosition > 1) watchLiteral(highestLiteral, ls[1 - i], conflict)
+        }
+        if (count != 1) forced[0] = 0
+        return res
     }
 
     // =========================================================================
@@ -1154,14 +1323,37 @@ class CaDiCaL(
     private fun protectReasons() {
         for (t in 0 until trail.size) {
             val r = vReason[vidx(trail[t])]
-            if (r != CREF_NONE && r != CREF_DECISION) cReason[r] = true
+            if (r != CREF_NONE && r != CREF_DECISION && r != CREF_EXTERNAL) cReason[r] = true
         }
     }
     private fun unprotectReasons() {
         for (t in 0 until clauses.size) cReason[clauses[t]] = false
     }
+    // reduce.cpp: units assigned out of order (only possible here through the external
+    // propagator) are propagated at the root before reducing.
+    private fun propagateOutOfOrderUnits(): Boolean {
+        if (level == 0) return true
+        var oou = 0
+        var i = ctlTrail[1]
+        while (oou == 0 && i < trail.size) {
+            val lit = trail[i++]
+            if (vLevel[vidx(lit)] != 0) continue
+            oou = lit
+        }
+        if (oou == 0) return true
+        backtrack(0)
+        if (propagate()) return true
+        unsat = true // learn_empty_clause
+        markedFailed = true
+        return false
+    }
+
     private fun reduce() {
         reductions++
+        if (!propagateOutOfOrderUnits()) {
+            tr("REDUCE") // upstream DONE: report, no limit update
+            return
+        }
         protectReasons()
 
         val tier1 = OPT_reducetier1glue
@@ -1277,6 +1469,10 @@ class CaDiCaL(
     private fun satisfied(): Boolean {
         // not satisfied until every assumption has been forced onto its own level
         if (level < assumptions.size) return false
+        if (numAssigned < maxVar) return false
+        // decide.cpp: also not before everything is propagated (only observable when an external
+        // propagator re-checks satisfied() after its callbacks; the CDCL loop propagates first)
+        if (propagated < trail.size) return false
         return numAssigned == maxVar
     }
 
@@ -1288,23 +1484,36 @@ class CaDiCaL(
             val v = valOfLit(lit)
             if (v < 0) {
                 // assumption falsified under the current (assumption-forced) prefix
+                markedFailed = false // decide.cpp: if (res) marked_failed = false
                 return 20
             } else if (v > 0) {
                 // already satisfied: add a pseudo decision level, like CaDiCaL. This is not
                 // a real branch, so no DECIDE trace is emitted (matches new_trail_level(0)).
                 newTrailLevel(0)
+                notifyDecision()
                 return 0
             } else {
+                // search_assume_decision
                 newTrailLevel(lit)
+                notifyDecision()
                 tr("DECIDE $lit")
                 assign(lit, CREF_DECISION, 'D')
                 return 0
             }
         }
-        val idx = nextDecisionVariable()
-        val target = (OPT_target > 1 || (stable && OPT_target != 0))
-        val decision = decidePhase(idx, target)
+        var decision = askDecision()
+        if (level < assumptions.size) {
+            // Forced backtrack below pseudo decision levels; the branch above handles it.
+            return decide()
+        }
+        if (decision == 0) {
+            val idx = nextDecisionVariable()
+            val target = (OPT_target > 1 || (stable && OPT_target != 0))
+            decision = decidePhase(idx, target)
+        }
+        // search_assume_decision
         newTrailLevel(decision)
+        notifyDecision()
         tr("DECIDE $decision")
         assign(decision, CREF_DECISION, 'D')
         return 0
@@ -1314,14 +1523,23 @@ class CaDiCaL(
     // add clause (root-level simplification)
     // =========================================================================
     private val addBuf = IntArrayList()
+    private val learnedLevels = IntArrayList()
+    // clause.cpp add_new_original_clause; also the add path of external clauses, where
+    // fromPropagator / forceNoBacktrack change the behaviour and newestClause is set.
     private fun addClauseInternal(raw: IntArray): Boolean {
         // Process original clauses at the root, as upstream add_new_original_clause does
         // (clause.cpp: `if (level) backtrack();`). Adding a clause while a previous solve left a
         // level>0 trail would otherwise place a unit at the wrong trail position (past the
         // level-0 cut) so backtrack(0) later unassigns it and the fixed literal is lost; the
         // root-false / taut checks below also rely on vLevel being the real root level.
-        if (level > 0) backtrack(0)
+        // Clauses from the propagator are added on the current level. (The ILB
+        // tainted_literal branch is omitted: no ILB.)
+        if (!fromPropagator && level > 0) backtrack(0)
+        newestClause = CREF_NONE
+        if (unsat) return true // skipping clause since formula is already inconsistent
         addBuf.clear()
+        learnedLevels.clear()
+        var unassigned = 0
         var taut = false
         for (lit in raw) {
             ensureVar(vidx(lit))
@@ -1337,16 +1555,480 @@ class CaDiCaL(
                 i++
             }
             if (taut) break
-            if (!dup) addBuf.add(lit)
+            if (!dup) {
+                addBuf.add(lit)
+                if (v != 0) {
+                    val lv = vLevel[vidx(lit)]
+                    if (!learnedLevels.contains(lv)) learnedLevels.add(lv)
+                } else {
+                    unassigned++
+                }
+            }
         }
         if (taut) return true
-        if (addBuf.size == 0) { unsat = true; return false }
+        if (addBuf.size == 0) { unsat = true; markedFailed = true; return false }
         if (addBuf.size == 1) {
-            assign(addBuf[0], CREF_NONE, 'U')
-            return propagate()
+            val lit = addBuf[0]
+            if (forceNoBacktrack) {
+                // unit reason learned during analysis: stays on the trail, now at level 0
+                check(level > 0 && valOfLit(lit) > 0) { "forced unit $lit must be true above the root" } // clause.cpp asserts
+                val idx = vidx(lit)
+                vLevel[idx] = 0
+                vReason[idx] = CREF_NONE
+                return true
+            }
+            if (valOfLit(lit) < 0) backtrack(vLevel[vidx(lit)] - 1)
+            handleExternalClause(CREF_NONE)
+            // assign_original_unit: a root conflict learns the empty clause
+            assign(lit, CREF_NONE, 'U')
+            if (propagate()) return true
+            unsat = true
+            markedFailed = true // learn_empty_clause
+            return false
         }
-        newClause(addBuf.toArray(), false, 0)
+        moveLiteralsToWatch()
+        val glue = minOf(learnedLevels.size + unassigned, addBuf.size) // new_clause clamps glue to size
+        val forgettable = fromPropagator && extClauseForgettable
+        val cr = newClause(addBuf.toArray(), forgettable, glue)
+        if (forgettable) cUsed[cr] = 0 // clause.cpp new_clause: used = 0 (not a learned clause)
+        handleExternalClause(cr)
+        newestClause = cr
         return true
+    }
+
+    // =========================================================================
+    // IPASIR-UP external propagation (external_propagate.cpp + the External/Solver
+    // wrappers of external.cpp / solver.cpp). The external->internal map is the identity
+    // here (DIMACS var N == internal idx N), so e2i/i2e/externalize/internalize vanish.
+    // Not ported, as the features do not exist in this port: ILB (set_tainted_literal,
+    // renotify_trail_after_ilb), local search (renotify_trail_after_local_search,
+    // renotify_full_trail), solution reconstruction (reset_extended/extend: external_check_solution
+    // reads the internal values directly), freeze/melt (no elimination), proof/LRAT/check
+    // (forgettable_original, lrat_chain stashing), stats, and the mobical-only debug helpers.
+    // =========================================================================
+
+    // Internal::fixed: root-level value of [lit], 0 if not fixed.
+    private fun fixed(lit: Int): Int {
+        val idx = vidx(lit)
+        if (vals[idx].toInt() != 0 && vLevel[idx] != 0) return 0
+        return valOfLit(lit)
+    }
+
+    // External::observed (bounds-checked is_observed lookup).
+    private fun externalObserved(elit: Int): Boolean {
+        val eidx = vidx(elit)
+        if (eidx > maxVar) return false
+        return isObserved[eidx]
+    }
+
+    // external_propagate.cpp: add_observed_var
+    private fun internalAddObservedVar(ilit: Int) {
+        val idx = vidx(ilit)
+        if (relevantTab[idx] < Int.MAX_VALUE) relevantTab[idx]++ // else: observed forever
+        if (valOfLit(ilit) != 0 && level > 0 && fixed(ilit) == 0) {
+            // Assigned on an earlier level, which can not be notified anymore: backtrack to
+            // undo this unnotifiable assignment.
+            val assignmentLevel = vLevel[idx]
+            backtrack(assignmentLevel - 1)
+        } else if (level > 0 && fixed(ilit) != 0) {
+            backtrack(0)
+        }
+    }
+
+    // external_propagate.cpp: remove_observed_var
+    private fun internalRemoveObservedVar(ilit: Int) {
+        if (fixed(ilit) == 0 && level > 0) backtrack(0)
+        val idx = vidx(ilit)
+        check(fixed(ilit) != 0 || relevantTab[idx] > 0) { "remove_observed_var: variable $idx is not observed" }
+        if (fixed(ilit) != 0) relevantTab[idx] = 0
+        else if (relevantTab[idx] < Int.MAX_VALUE) relevantTab[idx]--
+    }
+
+    // external_propagate.cpp: observed
+    private fun observed(ilit: Int): Boolean = relevantTab[vidx(ilit)] > 0
+
+    // external_propagate.cpp: is_decision
+    private fun internalIsDecision(ilit: Int): Boolean {
+        if (level == 0 || fixed(ilit) != 0 || valOfLit(ilit) == 0) return false
+        val idx = vidx(ilit)
+        if (vLevel[idx] == 0 || vReason[idx] != CREF_NONE) return false
+        return true
+    }
+
+    // external_propagate.cpp: force_backtrack
+    private fun internalForceBacktrack(newLevel: Int) {
+        if (!forcedBacktAllowed || level <= 0 || newLevel >= level) return
+        backtrack(newLevel)
+    }
+
+    // external_propagate.cpp: external_propagate. Asks the propagator for literals to
+    // propagate (their reasons are learned lazily) and for external clauses.
+    private fun externalPropagate(): Boolean {
+        check(!unsat)
+        var cbRepropagateNeeded = true
+        while (cbRepropagateNeeded && conflict == CREF_NONE && externalProp && !externalPropIsLazy) {
+            cbRepropagateNeeded = false
+            notifyAssignments()
+            val p = propagator!!
+            var elit = p.cbPropagate()
+            while (elit != 0) {
+                check(externalObserved(elit)) { "cb_propagate returned $elit over an unobserved variable" }
+                val ilit = elit
+                val tmp = valOfLit(ilit)
+                if (tmp == 0) {
+                    // variable is not assigned, it can be propagated
+                    if (level == 0) learnExternalReasonClause(ilit, elit, false)
+                    else searchAssignExternal(ilit)
+                    if (unsat || conflict != CREF_NONE) break
+                    propagate()
+                    if (unsat || conflict != CREF_NONE) break
+                    notifyAssignments()
+                } else if (tmp < 0) {
+                    // external propagation is falsified under the current trail
+                    val levelBefore = level
+                    val assigned = numAssigned
+                    learnExternalReasonClause(ilit, elit, false)
+                    val trailChanged = (numAssigned != assigned || level != levelBefore ||
+                        propagated < trail.size)
+                    if (unsat || conflict != CREF_NONE) break
+                    if (trailChanged) {
+                        propagate()
+                        if (unsat || conflict != CREF_NONE) break
+                        notifyAssignments()
+                    }
+                } // else (tmp > 0) -> the case of a satisfied literal is ignored
+                elit = p.cbPropagate()
+            }
+
+            if (!unsat && conflict == CREF_NONE) {
+                var levelBefore = level
+                var assigned = numAssigned
+                var hasExternalClause = askExternalClause()
+                // New observed variable might have triggered a backtrack during this
+                // askExternalClause call, so we need to propagate before continuing
+                var trailChanged = (numAssigned != assigned || level != levelBefore ||
+                    propagated < trail.size)
+                if (trailChanged) {
+                    propagate() // unsat or conflict will be caught later
+                    if (!unsat || conflict == CREF_NONE) notifyAssignments() // upstream: `!unsat || !conflict`
+                }
+                while (hasExternalClause) {
+                    levelBefore = level
+                    assigned = numAssigned
+                    addExternalClause(0, false)
+                    trailChanged = (numAssigned != assigned || level != levelBefore ||
+                        propagated < trail.size)
+                    cbRepropagateNeeded = true
+                    if (unsat || conflict != CREF_NONE) {
+                        cbRepropagateNeeded = false
+                        break
+                    }
+                    if (trailChanged) {
+                        propagate()
+                        if (unsat || conflict != CREF_NONE) {
+                            cbRepropagateNeeded = false
+                            break
+                        }
+                        notifyAssignments()
+                    }
+                    hasExternalClause = askExternalClause()
+                }
+            }
+        }
+        return conflict == CREF_NONE
+    }
+
+    // external_propagate.cpp: ask_external_clause
+    private fun askExternalClause(): Boolean {
+        extClauseForgettable = false
+        extClauseForgettableOut.value = extClauseForgettable
+        val res = propagator!!.cbHasExternalClause(extClauseForgettableOut)
+        extClauseForgettable = extClauseForgettableOut.value
+        return res
+    }
+
+    // external_propagate.cpp: move_literals_to_watch. Reorders the simplified external
+    // clause (addBuf) so the two literals to watch come first.
+    private fun moveLiteralsToWatch() {
+        if (addBuf.size < 2) return
+        if (level == 0) return
+        for (i in 0 until 2) {
+            var highestPosition = i
+            var highestLiteral = addBuf[i]
+            var highestLevel = vLevel[vidx(highestLiteral)]
+            var highestValue = valOfLit(highestLiteral)
+            for (j in i + 1 until addBuf.size) {
+                val other = addBuf[j]
+                val otherLevel = vLevel[vidx(other)]
+                val otherValue = valOfLit(other)
+                if (otherValue < 0) {
+                    if (highestValue >= 0) continue
+                    if (otherLevel <= highestLevel) continue
+                } else if (otherValue > 0) {
+                    if (highestValue > 0 && otherLevel >= highestLevel) continue
+                } else {
+                    if (highestValue >= 0) continue
+                }
+                highestPosition = j
+                highestLiteral = other
+                highestLevel = otherLevel
+                highestValue = otherValue
+            }
+            if (highestPosition == i) continue
+            if (highestPosition > i) {
+                val t = addBuf[i]; addBuf[i] = addBuf[highestPosition]; addBuf[highestPosition] = t
+            }
+        }
+    }
+
+    // external_propagate.cpp: add_external_clause. Reads a reason clause of
+    // [propagatedElit] (cb_add_reason_clause_lit) or, if it is 0, an external clause
+    // (cb_add_external_clause_lit), and adds it through add_new_original_clause.
+    private fun addExternalClause(propagatedElit: Int, noBacktrack: Boolean) {
+        val p = propagator!!
+        var elit: Int
+        if (propagatedElit != 0) {
+            // reason clauses are forgettable unless the propagator says otherwise
+            extClauseForgettable = p.areReasonsForgettable
+            elit = p.cbAddReasonClauseLit(propagatedElit)
+        } else {
+            elit = p.cbAddExternalClauseLit()
+        }
+        check(!forceNoBacktrack && !fromPropagator)
+        forceNoBacktrack = noBacktrack
+        fromPropagator = true
+        extOriginal.clear()
+        while (elit != 0) {
+            check(externalObserved(elit)) { "external clause literal $elit is over an unobserved variable" }
+            extOriginal.add(elit)
+            elit = if (propagatedElit != 0) p.cbAddReasonClauseLit(propagatedElit) else p.cbAddExternalClauseLit()
+        }
+        addClauseInternal(extOriginal.toArray())
+        forceNoBacktrack = false
+        fromPropagator = false
+    }
+
+    // external_propagate.cpp: explain_reason. Learns the reasons of every externally
+    // propagated literal of [reason] and marks the not yet explained ones.
+    private fun explainReason(ilit: Int, reason: Int, open: IntArray) {
+        if (!OPT_exteagerreasons) return
+        for (other in lits(reason)) {
+            if (other == ilit) continue
+            val idx = vidx(other)
+            if (seen[idx].toInt() != 0) continue
+            if (vLevel[idx] == 0) continue
+            if (vReason[idx] == CREF_EXTERNAL) {
+                vReason[idx] = learnExternalReasonClause(-other, 0, true)
+            }
+            if (vLevel[idx] != 0 && vReason[idx] != CREF_NONE) {
+                seen[idx] = 1
+                open[0]++
+            }
+        }
+    }
+
+    // external_propagate.cpp: explain_external_propagations. Before conflict analysis, learns
+    // every external reason backward reachable from the conflict, then recalculates the
+    // assignment levels of the touched literals from lower to higher levels.
+    private val explainOpen = IntArray(1)
+    private fun explainExternalPropagations() {
+        val reason = conflict
+        val seenLits = IntArrayList()
+        explainOpen[0] = 0 // seen but not explained literals
+        explainReason(0, reason, explainOpen) // marks conflict clause lits as seen
+        var i = trail.size
+        while (i > 0) {
+            val lit = trail[--i]
+            val idx = vidx(lit)
+            if (seen[idx].toInt() == 0) continue
+            seenLits.add(lit)
+            if (vLevel[idx] == 0) continue
+            if (vReason[idx] != CREF_NONE) {
+                explainOpen[0]--
+                explainReason(lit, vReason[idx], explainOpen)
+            }
+            if (explainOpen[0] == 0) break
+        }
+        check(explainOpen[0] == 0)
+
+        if (!OPT_exteagerrecalc) {
+            for (t in 0 until seenLits.size) seen[vidx(seenLits[t])] = 0
+        }
+
+        // Traverse in the opposite direction (from lower to higher levels) and calculate the
+        // actual assignment level for the seen assignments.
+        for (t in seenLits.size - 1 downTo 0) {
+            val lit = seenLits[t]
+            val idx = vidx(lit)
+            if (vReason[idx] != CREF_NONE) {
+                var realLevel = 0
+                for (other in lits(vReason[idx])) {
+                    if (other == lit) continue
+                    val tmp = vLevel[vidx(other)]
+                    if (tmp > realLevel) realLevel = tmp
+                }
+                if (vLevel[idx] != 0 && realLevel == 0) {
+                    // learn_unit_clause: only proof/stats/flags here
+                    vReason[idx] = CREF_NONE
+                }
+                if (vLevel[idx] > realLevel) vLevel[idx] = realLevel
+            }
+            seen[idx] = 0
+        }
+    }
+
+    // external_propagate.cpp: learn_external_reason_clause. Upstream moves `clause` aside
+    // first; the port's add path uses its own addBuf, so the analysis clause is untouched.
+    private fun learnExternalReasonClause(ilit: Int, falsifiedElit: Int, noBacktrack: Boolean): Int {
+        val elit = if (falsifiedElit == 0) ilit else falsifiedElit
+        addExternalClause(elit, noBacktrack)
+        return newestClause
+    }
+
+    // external_propagate.cpp: handle_external_clause. Checks if the new clause forces
+    // backtracking, new assignments or conflict analysis (chrono off: backtrack first).
+    private fun handleExternalClause(res: Int) {
+        // at level 0 we have to do nothing...
+        if (level == 0) return
+        if (res == CREF_NONE) {
+            // new unit clause. For now just backtrack.
+            backtrack(0)
+            return
+        }
+        val pos0 = lits(res)[0]
+        val pos1 = lits(res)[1]
+        if (forceNoBacktrack) {
+            check(valOfLit(pos1) < 0 && valOfLit(pos0) >= 0) { "forced reason clause is not propagating" } // upstream assert
+            return
+        }
+        val l1 = vLevel[vidx(pos1)]
+        if (valOfLit(pos0) < 0) { // conflicting or propagating clause
+            backtrack(l1)
+            if (valOfLit(pos0) < 0) {
+                // The `!from_propagator` sub-branch (backtrack below the clause) is omitted:
+                // without ILB, clauses not from the propagator are added at level 0.
+                conflict = res
+            } else {
+                searchAssignDriving(pos0, res)
+            }
+            return
+        }
+        if (valOfLit(pos1) < 0 && valOfLit(pos0) == 0) { // propagating clause
+            backtrack(l1)
+            searchAssignDriving(pos0, res)
+            return
+        }
+    }
+
+    // external_propagate.cpp: external_check_solution. Asks the propagator to approve the
+    // found model; it may reject it by adding clauses (or observing new variables).
+    private fun externalCheckSolution(): Boolean {
+        if (!externalProp) return true
+        val p = propagator!!
+        var trailChanged = true
+        var addedNewClauses = false
+        while (trailChanged || addedNewClauses) {
+            notifyAssignments()
+            if (!satisfied()) break
+            trailChanged = false // to be on the safe side
+            addedNewClauses = false
+            // Filtered by is_observed: fixed variables are internally not necessarily observed.
+            val etrail = IntArrayList()
+            for (idx in 1..maxVar) {
+                if (!isObserved[idx]) continue
+                etrail.add(if (vals[idx].toInt() > 0) idx else -idx) // External::ival
+            }
+            val isConsistent = p.cbCheckFoundModel(etrail.toArray())
+            if (isConsistent) return true
+
+            var hasExternalClause = askExternalClause()
+            while (hasExternalClause) {
+                val levelBefore = level
+                val assigned = numAssigned
+                addExternalClause(0, false)
+                // upstream declares a new (shadowing) trail_changed here; the outer one stays false
+                val clauseTrailChanged = (numAssigned != assigned || level != levelBefore ||
+                    propagated < trail.size)
+                addedNewClauses = true
+                if (unsat || conflict != CREF_NONE || clauseTrailChanged) break
+                hasExternalClause = askExternalClause()
+            }
+            if (unsat || conflict != CREF_NONE) break
+        }
+        if (!unsat && conflict != CREF_NONE) {
+            val conflictLevel = vLevel[vidx(lits(conflict)[0])]
+            if (conflictLevel != level) backtrack(conflictLevel)
+        }
+        return conflict == CREF_NONE
+    }
+
+    // external_propagate.cpp: notify_assignments. Notifies the observed literals assigned
+    // since the last notification (upstream calls notify_assignment even with none).
+    private fun notifyAssignments() {
+        if (!externalProp || externalPropIsLazy) return
+        val endOfTrail = trail.size
+        if (notified >= endOfTrail) return
+        val assigned = IntArrayList()
+        while (notified < endOfTrail) {
+            val ilit = trail[notified++]
+            if (!observed(ilit)) continue
+            assigned.add(ilit)
+        }
+        propagator!!.notifyAssignment(assigned.toArray())
+    }
+
+    // external_propagate.cpp: connect_propagator
+    private fun connectPropagator() {
+        if (level > 0) backtrack(0)
+    }
+
+    // external_propagate.cpp: notify_decision
+    private fun notifyDecision() {
+        if (!externalProp || externalPropIsLazy) return
+        propagator!!.notifyNewDecisionLevel()
+    }
+
+    // external_propagate.cpp: notify_backtrack
+    private fun notifyBacktrack(newLevel: Int) {
+        if (!externalProp || externalPropIsLazy) return
+        propagator!!.notifyBacktrack(newLevel)
+    }
+
+    // external_propagate.cpp: ask_decision. A suggested decision literal, or 0.
+    private fun askDecision(): Int {
+        if (!externalProp || externalPropIsLazy) return 0
+        check(!unsat && conflict == CREF_NONE)
+        notifyAssignments()
+        val levelBefore = level
+        forcedBacktAllowed = true
+        val elit = propagator!!.cbDecide()
+        forcedBacktAllowed = false
+        if (levelBefore != level) {
+            propagate()
+            check(!unsat && conflict == CREF_NONE) { "propagation after force_backtrack produced a conflict" }
+            notifyAssignments()
+            // In case the propagator forced to backtrack below the pseudo decision levels,
+            // we must go back to the CDCL loop instead of making a decision.
+            if (level < assumptions.size) return 0
+        }
+        if (elit == 0) return 0
+        check(externalObserved(elit)) { "cb_decide returned $elit over an unobserved variable" }
+        val ilit = elit
+        // Proposed decision variable is already assigned, falling back to internal decision.
+        if (fixed(ilit) != 0 || valOfLit(ilit) != 0) return 0
+        return ilit
+    }
+
+    // propagate.cpp: search_assign_driving
+    private fun searchAssignDriving(lit: Int, c: Int) {
+        assign(lit, c, 'C')
+        notifyAssignments()
+    }
+
+    // propagate.cpp: search_assign_external
+    private fun searchAssignExternal(lit: Int) {
+        assign(lit, CREF_EXTERNAL, 'E')
+        notifyAssignments()
     }
 
     // =========================================================================
@@ -1378,7 +2060,15 @@ class CaDiCaL(
             if (unsat) res = 20
             else if (!propagate()) analyze()
             else if (iterating) iterating = false
-            else if (satisfied()) res = 10
+            else if (!externalPropagate() || unsat) { // external propagation
+                if (unsat) continue
+                else analyze()
+            } else if (satisfied()) { // found model
+                if (!externalCheckSolution() || unsat) {
+                    if (unsat) continue
+                    else analyze()
+                } else if (satisfied()) res = 10
+            }
             else if (restarting()) restart()
             else if (reducing()) reduce()
             else res = decide() // 0 continue, 20 if an assumption is falsified
@@ -1391,9 +2081,10 @@ class CaDiCaL(
             // Compute the failed-assumption core eagerly, while level/reason/trail are
             // still intact (solve() backtracks to level 0 immediately after this returns).
             // assume.cpp lazily calls failing() from failed(); here it must run before the
-            // rollback. Only meaningful under assumptions.
-            if (assumptions.isNotEmpty()) {
+            // rollback. failed(): if (!marked_failed) { failing (); marked_failed = true; }
+            if (!markedFailed) {
                 computeFailed()
+                markedFailed = true
                 failedValid = true
             }
             tr("RESULT UNSAT")
@@ -1410,13 +2101,30 @@ class CaDiCaL(
     // Public SatSolver API
     // =========================================================================
     override fun addClause(literals: IntArray) {
+        require(!solving) { "addClause: not allowed during solving (e.g. from a propagator callback)" } // REQUIRE_VALID_STATE
+        unsatisfiedState = false
         if (unsat) return
         addClauseInternal(literals)
     }
 
     override fun solve(): SatResult {
-        val r = solveLoop()
+        require(!solving) { "solve: not allowed during solving" } // REQUIRE_READY_STATE
+        resetFailed()
+        solving = true
+        val r = try {
+            solveLoop()
+        } finally {
+            solving = false
+        }
+        unsatisfiedState = r == 20
         return if (r == 10) SatResult.SAT else SatResult.UNSAT
+    }
+
+    // Drop any core from a previous UNSAT solve so a stale result can't leak into failed()
+    // (assume.cpp clears failed bits per incremental phase in reset_assumptions).
+    private fun resetFailed() {
+        failedValid = false
+        for (i in 1..maxVar) failedBits[i] = 0
     }
 
     /**
@@ -1424,22 +2132,22 @@ class CaDiCaL(
      * The assumptions are consumed as forced decisions in [decide]; after the solve the trail
      * is rolled back to level 0 so the same instance can be solved again under different
      * assumptions on the same clause set. On SAT, [valueOf] is the model of this solve; on
-     * UNSAT the assumptions were jointly inconsistent with the formula. Only the verdict and
-     * the model are produced — no failed-assumption core.
+     * UNSAT, [failed] gives the failed-assumption core.
      */
     override fun solve(assumptions: IntArray): SatResult {
+        require(!solving) { "solve: not allowed during solving" } // REQUIRE_READY_STATE
         this.assumptions = assumptions
-        // Drop any core from a previous UNSAT solve so a stale result can't leak into
-        // failed() (assume.cpp clears failed bits per incremental phase in reset_assumptions).
-        failedValid = false
-        for (i in 1..maxVar) failedBits[i] = 0
+        resetFailed()
+        solving = true
         val r = try {
             solveLoop()
         } finally {
             // roll back the assumption-forced prefix so the instance is reusable
             if (level > 0) backtrack(0)
             this.assumptions = IntArray(0)
+            solving = false
         }
+        unsatisfiedState = r == 20
         return if (r == 10) SatResult.SAT else SatResult.UNSAT
     }
 
@@ -1454,14 +2162,102 @@ class CaDiCaL(
      * IPASIR failed(): true iff the signed DIMACS assumption [lit] is in the failed core of
      * the last UNSAT-under-assumptions solve (assume.cpp Internal::failed). The core is
      * computed eagerly at the UNSAT exit (see solveLoop); here we just read the stored bit.
-     * Returns false (not throw) when the last solve was SAT or had no assumptions — IPASIR's
-     * failed() returns 0 in that case, and it is only meaningful after UNSAT under assumptions.
+     * As in solver.cpp, only allowed in the unsatisfied state (last solve returned UNSAT, no
+     * clause added since); an UNSAT that no assumption caused has an empty core.
      */
     override fun failed(lit: Int): Boolean {
+        require(!solving) { "failed: not allowed during solving" } // REQUIRE_VALID_STATE
+        require(lit != 0 && lit != Int.MIN_VALUE) { "invalid literal $lit" } // REQUIRE_VALID_LIT
+        check(unsatisfiedState) { "can only get failed assumptions in unsatisfied state" } // solver.cpp: REQUIRE
         if (!failedValid) return false
         val idx = vidx(lit)
-        if (idx < 1 || idx > maxVar) return false
+        if (idx < 1 || idx > maxVar) return false // External::failed: eidx > max_var -> 0
         return (failedBits[idx].toInt() and bign(lit)) != 0
+    }
+
+    // =========================================================================
+    // Public IPASIR-UP API (solver.cpp / external.cpp, "IPASIR-UP BEGIN".."END").
+    // REQUIRE_VALID_STATE == not while solving (i.e. not from inside a callback).
+    // =========================================================================
+
+    // solver.cpp: connect_external_propagator. A previously connected propagator is
+    // disconnected first, as upstream does.
+    override fun connectExternalPropagator(propagator: ExternalPropagator) {
+        require(!solving) { "connectExternalPropagator: not allowed during solving" }
+        if (this.propagator != null) disconnectExternalPropagator()
+        this.propagator = propagator
+        connectPropagator()
+        externalProp = true
+        externalPropIsLazy = propagator.isLazy
+    }
+
+    // solver.cpp: disconnect_external_propagator (set_tainted_literal is ILB-only: omitted)
+    override fun disconnectExternalPropagator() {
+        require(!solving) { "disconnectExternalPropagator: not allowed during solving" }
+        if (propagator != null) resetObservedVars()
+        propagator = null
+        externalProp = false
+        externalPropIsLazy = true
+    }
+
+    // external.cpp: External::add_observed_var. Upstream silently ignores the call without a
+    // propagator; cadical.hpp states a variable can not be observed without one, so fail.
+    override fun addObservedVar(v: Int) {
+        require(v != 0 && v != Int.MIN_VALUE) { "addObservedVar: invalid literal $v" }
+        // external.cpp: without a connected propagator there is nothing to observe for, so the
+        // observed flag is not set (upstream only logs this).
+        val p = propagator ?: return
+        val eidx = vidx(v)
+        if (eidx <= maxVar && isObserved[eidx]) return
+        ensureVar(eidx) // freeze -> internalize: creates the variable
+        isObserved[eidx] = true
+        internalAddObservedVar(v)
+        if (p.isLazy) return
+        // An already fixed variable can not be unassigned, so notify it explicitly now.
+        val tmp = fixed(v)
+        if (tmp == 0) return
+        val unit = if (tmp < 0) -v else v
+        check(level == 0) { "add_observed_var must have backtracked to the root" } // external.cpp assert
+        p.notifyAssignment(intArrayOf(unit))
+    }
+
+    // external.cpp: External::remove_observed_var (no-op without a propagator, as upstream)
+    override fun removeObservedVar(v: Int) {
+        require(!solving) { "removeObservedVar: not allowed during solving" }
+        require(v != 0 && v != Int.MIN_VALUE) { "removeObservedVar: invalid literal $v" }
+        if (propagator == null) return
+        val eidx = vidx(v)
+        if (eidx > maxVar) return
+        if (isObserved[eidx]) {
+            internalRemoveObservedVar(v)
+            isObserved[eidx] = false
+        }
+    }
+
+    // external.cpp: External::reset_observed_vars (upstream asserts a connected propagator)
+    override fun resetObservedVars() {
+        checkNotNull(propagator) { "resetObservedVars: no external propagator connected" }
+        notified = 0
+        for (eidx in 1..maxVar) {
+            if (isObserved[eidx]) {
+                internalRemoveObservedVar(eidx)
+                isObserved[eidx] = false
+            }
+        }
+    }
+
+    // external.cpp: External::is_decision
+    override fun isDecision(lit: Int): Boolean {
+        require(lit != 0 && lit != Int.MIN_VALUE) { "isDecision: invalid literal $lit" }
+        if (vidx(lit) > maxVar) return false
+        return internalIsDecision(lit)
+    }
+
+    // external.cpp: External::force_backtrack. Upstream takes a size_t level.
+    override fun forceBacktrack(newLevel: Int) {
+        require(newLevel >= 0) { "forceBacktrack: negative level $newLevel" }
+        if (propagator == null) return
+        internalForceBacktrack(newLevel)
     }
 }
 
@@ -1482,6 +2278,7 @@ class IntArrayList {
     fun clear() { size = 0 }
     fun shrinkTo(n: Int) { size = n }
     fun toArray(): IntArray = a.copyOf(size)
+    fun contains(x: Int): Boolean { for (k in 0 until size) if (a[k] == x) return true; return false }
 }
 
 /** Minimal growable boolean list, parallel to [IntArrayList] for the watcher 'bin' flag. */
