@@ -8,7 +8,8 @@ package org.bytefred.ksat.cadical.full
  *  - 'enum Status', 'enum State' -> Int constants (they are combined as bit sets).
  *  - Abstract classes with pure virtual methods -> interfaces; virtual methods with a
  *    default body keep that body as interface default.
- *  - 'const std::vector<int> &' arguments -> 'List<Int>' snapshots for the call backs.
+ *  - 'const std::vector<int> &' arguments -> 'List<Int>' snapshots for the call backs
+ *    (ExternalPropagator / FixedAssignmentListener: the ksat-common interfaces, IntArray).
  *  - 'size_t new_level' -> Int. 'bool &is_forgettable' (out parameter) -> [OutFlag].
  *  - 'uint64_t id' -> Long.
  */
@@ -33,8 +34,8 @@ internal const val READY = CONFIGURING or STEADY or SATISFIED or UNSATISFIED
 internal const val VALID = READY or ADDING
 internal const val INVALID = INITIALIZING or DELETING
 
-/** Out parameter 'bool &' of the call back API. */
-internal class OutFlag(var value: Boolean = false)
+/** Out parameter 'bool &' of the call back API (the ksat-common type the facade uses). */
+internal typealias OutFlag = org.bytefred.ksat.OutBoolean
 
 // 'terminate' function of the terminator returns true the solver is
 // terminated synchronously as soon it calls this function.
@@ -53,35 +54,15 @@ internal interface Learner {
 
 // Connected listener gets notified whenever the truth value of a variable
 // is fixed (for example during inprocessing or due to some derived unit
-// clauses).
-internal interface FixedAssignmentListener {
-    fun notifyFixedAssignment(lit: Int)
-}
+// clauses). The interface is the one of ksat-common (shared with the facade).
+internal typealias FixedAssignmentListener = org.bytefred.ksat.FixedAssignmentListener
 
 // Allows to connect an external propagator to propagate values to variables
 // with an external clause as a reason or to learn new clauses during the
 // CDCL loop (without restart). See upstream 'cadical.hpp' for the contract of
-// each call back.
-internal interface ExternalPropagator {
-    val isLazy: Boolean get() = false // lazy propagator only checks complete assignments
-    val areReasonsForgettable: Boolean get() = false // Reason external clauses can be deleted
-
-    fun notifyAssignment(lits: List<Int>)
-    fun notifyNewDecisionLevel()
-    fun notifyBacktrack(newLevel: Int)
-
-    fun cbCheckFoundModel(model: List<Int>): Boolean
-
-    fun cbDecide(): Int = 0
-
-    fun cbPropagate(): Int = 0
-
-    fun cbAddReasonClauseLit(propagatedLit: Int): Int = 0
-
-    fun cbHasExternalClause(isForgettable: OutFlag): Boolean
-
-    fun cbAddExternalClauseLit(): Int
-}
+// each call back. The interface is the one of ksat-common (shared with the
+// facade): 'const std::vector<int> &' -> IntArray, 'bool &' -> OutBoolean.
+internal typealias ExternalPropagator = org.bytefred.ksat.ExternalPropagator
 
 // Allows to traverse all remaining irredundant clauses.  Satisfied and
 // eliminated clauses are not included, nor any derived units unless such

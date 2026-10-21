@@ -14,7 +14,8 @@ Rules applied (see PORTING.md for the general type mapping):
   `handleExternalClause.res` are `Clause?`.
 - `Clause *` results are `Clause?` where upstream can return null (`newDrivingClause`,
   `onTheFlyStrengthen`, `blockImpossible`, `findBinaryClause`, `findTernaryClause`,
-  `findClause`), otherwise `Clause`.
+  `findClause`, `learnExternalReasonClause`, `wrappedLearnExternalReasonClause`: they return
+  `newest_clause`, null for satisfied / unit / empty external clauses), otherwise `Clause`.
 - `int &` / `unsigned &` / `size_t &` -> `IntRef`, `int64_t &` -> `LongRef`, `bool &` ->
   `BoolRef` (Refs.kt). `std::vector<int>::reverse_iterator` -> element index (see PORTING.md).
 - Upstream member functions of the helper structs (`Eliminator::enqueue`, ...) and the
@@ -237,8 +238,8 @@ Rules applied (see PORTING.md for the general type mapping):
 | external_propagate.cpp | `bool external_propagate ()` | `Internal.externalPropagate(): Boolean` |
 | external_propagate.cpp | `bool external_check_solution ()` | `Internal.externalCheckSolution(): Boolean` |
 | external_propagate.cpp | `void add_external_clause (int propagated_lit = 0, bool no_backtrack = false)` | `Internal.addExternalClause(propagatedLit: Int = 0, noBacktrack: Boolean = false): Unit` |
-| external_propagate.cpp | `Clause * learn_external_reason_clause (int lit, int falsified_elit = 0, bool no_backtrack = false)` | `Internal.learnExternalReasonClause(lit: Int, falsifiedElit: Int = 0, noBacktrack: Boolean = false): Clause` |
-| external_propagate.cpp | `Clause * wrapped_learn_external_reason_clause (int lit)` | `Internal.wrappedLearnExternalReasonClause(lit: Int): Clause` |
+| external_propagate.cpp | `Clause * learn_external_reason_clause (int lit, int falsified_elit = 0, bool no_backtrack = false)` | `Internal.learnExternalReasonClause(lit: Int, falsifiedElit: Int = 0, noBacktrack: Boolean = false): Clause?` |
+| external_propagate.cpp | `Clause * wrapped_learn_external_reason_clause (int lit)` | `Internal.wrappedLearnExternalReasonClause(lit: Int): Clause?` |
 | external_propagate.cpp | `void explain_external_propagations ()` | `Internal.explainExternalPropagations(): Unit` |
 | external_propagate.cpp | `void explain_reason (int lit, Clause *, int &open)` | `Internal.explainReason(lit: Int, reason: Clause, open: IntRef): Unit` |
 | external_propagate.cpp | `void move_literals_to_watch ()` | `Internal.moveLiteralsToWatch(): Unit` |

@@ -1,8 +1,34 @@
 package org.bytefred.ksat.cadical.full
 
-// STUB generated from SIGNATURES.md; to be replaced by the 1:1 translation of phases.cpp.
+/*
+ * phases.cpp: copying / clearing phase tables and forcing phases ('phase', 'unphase').
+ */
 
-internal fun Internal.clearPhases(dst: ByteArray): Unit = TODO("phases.cpp: clearPhases")
-internal fun Internal.copyPhases(dst: ByteArray): Unit = TODO("phases.cpp: copyPhases")
-internal fun Internal.phase(lit: Int): Unit = TODO("phases.cpp: phase")
-internal fun Internal.unphase(lit: Int): Unit = TODO("phases.cpp: unphase")
+internal fun Internal.copyPhases(dst: ByteArray) {
+    for (i in vars) dst[i] = phases.saved[i]
+}
+
+internal fun Internal.clearPhases(dst: ByteArray) {
+    for (i in vars) dst[i] = 0
+}
+
+internal fun Internal.phase(lit: Int) {
+    val idx = vidx(lit)
+    val oldForcedPhase = phases.forced[idx].toInt()
+    val newForcedPhase = sign(lit)
+    if (oldForcedPhase == newForcedPhase) {
+        // forced phase remains
+        return
+    }
+    phases.forced[idx] = newForcedPhase.toByte()
+}
+
+internal fun Internal.unphase(lit: Int) {
+    val idx = vidx(lit)
+    val oldForcedPhase = phases.forced[idx].toInt()
+    if (oldForcedPhase == 0) {
+        // forced phase already reset
+        return
+    }
+    phases.forced[idx] = 0
+}

@@ -1,6 +1,21 @@
 package org.bytefred.ksat.cadical.full
 
-// STUB generated from SIGNATURES.md; to be replaced by the 1:1 translation of bins.cpp.
+/*
+ * bins.cpp: binary implication graph lists.
+ */
 
-internal fun Internal.initBins(): Unit = TODO("bins.cpp: initBins")
-internal fun Internal.resetBins(): Unit = TODO("bins.cpp: resetBins")
+/*------------------------------------------------------------------------*/
+
+// Binary implication graph lists.
+
+internal fun Internal.initBins() {
+    check(big.isEmpty())
+    if (big.size < 2 * vsize) big.resize(2 * vsize) { Bins() }
+    // LOG: initialized binary implication graph
+}
+
+internal fun Internal.resetBins() {
+    check(big.isNotEmpty())
+    big.clear()
+    // LOG: reset binary implication graph
+}

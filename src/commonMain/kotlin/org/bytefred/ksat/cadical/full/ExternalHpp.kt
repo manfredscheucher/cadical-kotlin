@@ -193,4 +193,25 @@ internal class External(val internal: Internal) {
         if (elit < 0) value = -value
         return if (value > 0) elit else -elit
     }
+
+    /*----------------------------------------------------------------------*/
+
+    // external.hpp lines 390-408: inline wrappers of the solution checks
+    // (the checks themselves are in solution.cpp -> Solution.kt).
+
+    fun checkLearnedEmptyClause() {
+        if (solution != null) checkNoSolutionAfterLearningEmptyClause()
+    }
+
+    fun checkLearnedUnitClause(unit: Int) {
+        if (solution != null) checkSolutionOnLearnedUnitClause(unit)
+    }
+
+    fun checkLearnedClause() {
+        if (solution != null) checkSolutionOnLearnedClause()
+    }
+
+    fun checkShrunkenClause(c: Clause) {
+        if (solution != null) checkSolutionOnShrunkenClause(c)
+    }
 }
