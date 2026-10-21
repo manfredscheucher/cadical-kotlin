@@ -489,7 +489,7 @@ class CaDiCaL(
         vLevel[idx] = 0
         vTrail[idx] = 0
         vReason[idx] = CREF_NONE
-        ensureWatchTables(2 * (maxVar + 1))
+        ensureWatchTables(2 * vals.size)   // internal.cpp enlarge: enlarge_only (wtab, 2 * new_vsize)
         stab[idx] = 0.0
         heapPos[idx] = HEAP_INVALID
         btab[idx] = 0
@@ -1350,13 +1350,14 @@ class CaDiCaL(
     // =========================================================================
     private fun reducing(): Boolean {
         if (!OPT_reduce) return false
-        var any = false
+        // C: `stats.conflicts >= lim.reduce` is a pure conjunct; test it before the
+        // O(clauses) scan standing in for `stats.current.redundant` (same result).
+        if (conflicts < limReduce) return false
         for (t in 0 until clauses.size) {
             val c = clauses[t]
-            if (cRedundant[c] && !cGarbage[c]) { any = true; break }
+            if (cRedundant[c] && !cGarbage[c]) return true
         }
-        if (!any) return false
-        return conflicts >= limReduce
+        return false
     }
     private fun protectReasons() {
         for (t in 0 until trail.size) {
