@@ -1,0 +1,36 @@
+package org.bytefred.ksat.cadical.full
+
+import org.bytefred.ksat.cadical.IntArrayList
+
+// STUB generated from SIGNATURES.md; to be replaced by the 1:1 translation of internal.cpp.
+
+internal fun Internal.initVars(newMaxVar: Int): Unit = TODO("internal.cpp: initVars")
+internal fun Internal.addOriginalLit(lit: Int): Unit = TODO("internal.cpp: addOriginalLit")
+internal fun Internal.finishAddedClauseWithId(lit: Long, restore: Boolean = false): Unit = TODO("internal.cpp: finishAddedClauseWithId")
+internal fun Internal.reserveIds(number: Int): Unit = TODO("internal.cpp: reserveIds")
+internal fun Internal.enlargeVals(newVsize: Int): Unit = TODO("internal.cpp: enlargeVals")
+internal fun Internal.enlarge(newMaxVar: Int): Unit = TODO("internal.cpp: enlarge")
+internal fun Internal.propagateAssumptions(): Int = TODO("internal.cpp: propagateAssumptions")
+internal fun Internal.getEntrailedLiterals(entrailed: IntArrayList): Unit = TODO("internal.cpp: getEntrailedLiterals")
+internal fun Internal.initReportLimits(): Unit = TODO("internal.cpp: initReportLimits")
+internal fun Internal.initPreprocessingLimits(): Unit = TODO("internal.cpp: initPreprocessingLimits")
+internal fun Internal.initSearchLimits(): Unit = TODO("internal.cpp: initSearchLimits")
+internal fun Internal.tryToSatisfyFormulaBySavedPhases(): Int = TODO("internal.cpp: tryToSatisfyFormulaBySavedPhases")
+internal fun Internal.produceFailedAssumptions(): Unit = TODO("internal.cpp: produceFailedAssumptions")
+internal fun Internal.alreadySolved(): Int = TODO("internal.cpp: alreadySolved")
+internal fun Internal.restoreClauses(): Int = TODO("internal.cpp: restoreClauses")
+internal fun Internal.preprocessRound(round: Int): Boolean = TODO("internal.cpp: preprocessRound")
+internal fun Internal.preprocess(): Int = TODO("internal.cpp: preprocess")
+internal fun Internal.localSearchRound(round: Int): Int = TODO("internal.cpp: localSearchRound")
+internal fun Internal.localSearch(): Int = TODO("internal.cpp: localSearch")
+internal fun Internal.cdclLoopWithInprocessing(): Int = TODO("internal.cpp: cdclLoopWithInprocessing")
+internal fun Internal.resetSolving(): Unit = TODO("internal.cpp: resetSolving")
+internal fun Internal.solve(preprocessOnly: Boolean = false): Int = TODO("internal.cpp: solve")
+internal fun Internal.finalize(res: Int): Unit = TODO("internal.cpp: finalize")
+internal fun Internal.lookahead(): Int = TODO("internal.cpp: lookahead")
+internal fun Internal.dump(c: Clause): Unit = TODO("internal.cpp: dump")
+internal fun Internal.dump(): Unit = TODO("internal.cpp: dump")
+internal fun Internal.traverseClauses(it: ClauseIterator): Boolean = TODO("internal.cpp: traverseClauses")
+internal fun Internal.traverseConstraint(it: ClauseIterator): Boolean = TODO("internal.cpp: traverseConstraint")
+internal fun Internal.reportSolving(res: Int): Unit = TODO("internal.cpp: reportSolving")
+internal fun Internal.printStatistics(): Unit = TODO("internal.cpp: printStatistics")

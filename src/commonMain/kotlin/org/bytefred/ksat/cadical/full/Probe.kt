@@ -1,0 +1,27 @@
+package org.bytefred.ksat.cadical.full
+
+// STUB generated from SIGNATURES.md; to be replaced by the 1:1 translation of probe.cpp.
+
+internal fun Internal.probing(): Boolean = TODO("probe.cpp: probing")
+internal fun Internal.failedLiteral(lit: Int): Unit = TODO("probe.cpp: failedLiteral")
+internal fun Internal.probeLratForUnits(lit: Int): Unit = TODO("probe.cpp: probeLratForUnits")
+internal fun Internal.probeAssignUnit(lit: Int): Unit = TODO("probe.cpp: probeAssignUnit")
+internal fun Internal.probeAssignDecision(lit: Int): Unit = TODO("probe.cpp: probeAssignDecision")
+internal fun Internal.probeAssign(lit: Int, parent: Int): Unit = TODO("probe.cpp: probeAssign")
+internal fun Internal.getParentReasonLiteral(lit: Int): Int = TODO("probe.cpp: getParentReasonLiteral")
+internal fun Internal.setParentReasonLiteral(lit: Int, reason: Int): Unit = TODO("probe.cpp: setParentReasonLiteral")
+internal fun Internal.cleanProbehbrLrat(): Unit = TODO("probe.cpp: cleanProbehbrLrat")
+internal fun Internal.initProbehbrLrat(): Unit = TODO("probe.cpp: initProbehbrLrat")
+internal fun Internal.getProbehbrLrat(lit: Int, uip: Int): Unit = TODO("probe.cpp: getProbehbrLrat")
+internal fun Internal.setProbehbrLrat(lit: Int, uip: Int): Unit = TODO("probe.cpp: setProbehbrLrat")
+internal fun Internal.probeDominatorLrat(dom: Int, reason: Clause): Unit = TODO("probe.cpp: probeDominatorLrat")
+internal fun Internal.probeDominator(a: Int, b: Int): Int = TODO("probe.cpp: probeDominator")
+internal fun Internal.hyperBinaryResolve(reason: Clause): Int = TODO("probe.cpp: hyperBinaryResolve")
+internal fun Internal.probePropagate2(): Unit = TODO("probe.cpp: probePropagate2")
+internal fun Internal.probePropagate(): Boolean = TODO("probe.cpp: probePropagate")
+internal fun Internal.isBinaryClause(c: Clause, a: IntRef, b: IntRef): Boolean = TODO("probe.cpp: isBinaryClause")
+internal fun Internal.generateProbes(): Unit = TODO("probe.cpp: generateProbes")
+internal fun Internal.flushProbes(): Unit = TODO("probe.cpp: flushProbes")
+internal fun Internal.nextProbe(): Int = TODO("probe.cpp: nextProbe")
+internal fun Internal.probeRound(): Boolean = TODO("probe.cpp: probeRound")
+internal fun Internal.probe(updateLimits: Boolean = true): Unit = TODO("probe.cpp: probe")

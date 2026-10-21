@@ -1,0 +1,25 @@
+package org.bytefred.ksat.cadical.full
+
+// STUB generated from SIGNATURES.md; to be replaced by the 1:1 translation of clause.cpp.
+
+internal fun Internal.markClause(): Unit = TODO("clause.cpp: markClause")
+internal fun Internal.mark(c: Clause): Unit = TODO("clause.cpp: mark")
+internal fun Internal.mark2(c: Clause): Unit = TODO("clause.cpp: mark2")
+internal fun Internal.unmarkClause(): Unit = TODO("clause.cpp: unmarkClause")
+internal fun Internal.unmark(c: Clause): Unit = TODO("clause.cpp: unmark")
+internal fun Internal.newClause(red: Boolean, glue: Int = 0): Clause = TODO("clause.cpp: newClause")
+internal fun Internal.promoteClause(c: Clause, newGlue: Int): Unit = TODO("clause.cpp: promoteClause")
+internal fun Internal.shrinkClause(c: Clause, newSize: Int): Int = TODO("clause.cpp: shrinkClause")
+internal fun Internal.deallocateClause(c: Clause): Unit = TODO("clause.cpp: deallocateClause")
+internal fun Internal.deleteClause(c: Clause): Unit = TODO("clause.cpp: deleteClause")
+internal fun Internal.markGarbage(c: Clause): Unit = TODO("clause.cpp: markGarbage")
+internal fun Internal.assignOriginalUnit(id: Long, lit: Int): Unit = TODO("clause.cpp: assignOriginalUnit")
+internal fun Internal.addNewOriginalClause(id: Long): Unit = TODO("clause.cpp: addNewOriginalClause")
+internal fun Internal.newLearnedRedundantClause(glue: Int): Clause = TODO("clause.cpp: newLearnedRedundantClause")
+internal fun Internal.newHyperBinaryResolvedClause(red: Boolean, glue: Int): Clause = TODO("clause.cpp: newHyperBinaryResolvedClause")
+internal fun Internal.newClauseAs(orig: Clause): Clause = TODO("clause.cpp: newClauseAs")
+internal fun Internal.newResolvedIrredundantClause(): Clause = TODO("clause.cpp: newResolvedIrredundantClause")
+internal fun Internal.markAdded(lit: Int, size: Int, redundant: Boolean): Unit = TODO("clause.cpp: markAdded")
+internal fun Internal.markAdded(c: Clause): Unit = TODO("clause.cpp: markAdded")
+internal fun Internal.markRemoved(c: Clause, except: Int = 0): Unit = TODO("clause.cpp: markRemoved")
+internal fun Internal.newHyperTernaryResolvedClause(red: Boolean): Clause = TODO("clause.cpp: newHyperTernaryResolvedClause")
