@@ -196,7 +196,7 @@ internal fun Internal.searchAssumeDecision(decision: Int) {
 }
 
 // Upstream passes a null 'c' from 'analyze' when the learned clause is a unit
-// (driving clause of size 1), hence 'Clause?' (SIGNATURES.md says 'Clause').
+// (driving clause of size 1), hence 'Clause?'.
 internal fun Internal.searchAssignDriving(lit: Int, reason: Clause?) {
     requireMode(Internal.SEARCH)
     searchAssign(lit, reason)

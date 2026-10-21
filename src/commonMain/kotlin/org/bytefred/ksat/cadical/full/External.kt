@@ -667,13 +667,49 @@ internal fun External.checkConstraintSatisfied() {
     error("constraint not satisfied")
 }
 
-// NOT PORTED YET: upstream builds a fresh 'Solver' checker (solver.cpp, a later wave),
-// adds the failed assumptions as units, the failed constraint, all 'original' clauses and
-// all 'forgettable_original' clauses, and requires 'checker->solve () == 20'. Only reached
-// with 'opts.check' and 'opts.checkfailed' (check is off by default). Fails loudly until
-// the 'Solver' class exists.
+// 'DeferDeletePtr' / 'delete_checker.free ()' are dropped (garbage collected). The iteration
+// order of 'forgettable_original' (unordered_map) differs from upstream; it does not matter
+// here, all those clauses are added to the checker.
 internal fun External.checkFailing() {
-    error("External::check_failing needs the Solver class (solver.cpp), not ported yet")
+    val checker = Solver()
+    checker.prefix("checker ")
+
+    for (k in 0 until assumptions.size) {
+        val lit = assumptions[k]
+        if (!failed(lit))
+            continue
+        checker.add(lit)
+        checker.add(0)
+    }
+    if (failedConstraint()) {
+        for (k in 0 until constraint.size)
+            checker.add(constraint[k])
+    }
+
+    // Add original clauses as last step, failing () and failed_constraint ()
+    // might add more external clauses (due to lazy explanation)
+    for (k in 0 until original.size)
+        checker.add(original[k])
+
+    // Add every forgettable external clauses
+    for (forgettables in forgettableOriginal) {
+        var presenceFlag = true
+        val second = forgettables.value
+        for (k in 0 until second.size) {
+            val lit = second[k]
+            if (presenceFlag) {
+                // First integer is a Boolean flag, not a literal, ignore it here
+                presenceFlag = false
+                continue
+            }
+            checker.add(lit)
+        }
+        checker.add(0)
+    }
+
+    val res = checker.solve()
+    if (res != 20)
+        error("failed assumptions do not form a core")
 }
 
 /*------------------------------------------------------------------------*/

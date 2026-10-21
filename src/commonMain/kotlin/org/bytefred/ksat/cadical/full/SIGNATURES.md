@@ -10,8 +10,8 @@ Rules applied (see PORTING.md for the general type mapping):
 
 - Names: camelCase of the upstream name; parameter names from the upstream `.cpp` definition.
 - `Clause *` parameters are non-null `Clause`, except where upstream passes or tests null:
-  `searchAssign.reason`, `assignmentLevel.reason`, `vivifyAssign.reason`,
-  `handleExternalClause.res` are `Clause?`.
+  `searchAssign.reason`, `searchAssignDriving.reason`, `assignmentLevel.reason`,
+  `vivifyAssign.reason`, `handleExternalClause.res` are `Clause?`.
 - `Clause *` results are `Clause?` where upstream can return null (`newDrivingClause`,
   `onTheFlyStrengthen`, `blockImpossible`, `findBinaryClause`, `findTernaryClause`,
   `findClause`, `learnExternalReasonClause`, `wrappedLearnExternalReasonClause`: they return
@@ -391,7 +391,7 @@ Rules applied (see PORTING.md for the general type mapping):
 | propagate.cpp | `void build_chain_for_units (int lit, Clause *reason, bool forced)` | `Internal.buildChainForUnits(lit: Int, reason: Clause, forced: Boolean): Unit` |
 | propagate.cpp | `void build_chain_for_empty ()` | `Internal.buildChainForEmpty(): Unit` |
 | propagate.cpp | `void search_assign (int lit, Clause *)` | `Internal.searchAssign(lit: Int, reason: Clause?): Unit` |
-| propagate.cpp | `void search_assign_driving (int lit, Clause *reason)` | `Internal.searchAssignDriving(lit: Int, reason: Clause): Unit` |
+| propagate.cpp | `void search_assign_driving (int lit, Clause *reason)` | `Internal.searchAssignDriving(lit: Int, reason: Clause?): Unit` |
 | propagate.cpp | `void search_assign_external (int lit)` | `Internal.searchAssignExternal(lit: Int): Unit` |
 | propagate.cpp | `void search_assume_decision (int decision)` | `Internal.searchAssumeDecision(decision: Int): Unit` |
 | propagate.cpp | `void assign_unit (int lit)` | `Internal.assignUnit(lit: Int): Unit` |

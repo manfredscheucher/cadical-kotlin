@@ -9,8 +9,7 @@ import org.bytefred.ksat.cadical.IntArrayList
  * proofs and the assumption reuse of incremental lazy backtracking.
  *
  * Mapping: 'goto DONE' in 'failing' jumps to 'STOP (analyze)' only, which is dropped, so it
- * is a 'return'. 'external->check_learned_clause ()' (inline wrapper in external.hpp) is
- * written out as its body: 'if (solution) check_solution_on_learned_clause ()'.
+ * is a 'return'.
  */
 
 // Failed literal handling as pioneered by MiniSAT.  This first function
@@ -393,7 +392,7 @@ internal fun Internal.failing() {
         // form a unit-implied clause.
         //
         if (!unsatConstraint) {
-            if (external.solution != null) external.checkSolutionOnLearnedClause()
+            external.checkLearnedClause()
             if (proof != null) {
                 val eclause = IntArrayList()
                 for (k in 0 until clause.size)
@@ -416,7 +415,7 @@ internal fun Internal.failing() {
                     constraintClauses.removeAt(constraintClauses.size - 1)
                 }
                 clause.add(-lit)
-                if (external.solution != null) external.checkSolutionOnLearnedClause()
+                external.checkLearnedClause()
                 if (proof != null) {
                     if (lrat) {
                         for (p in constraintChains.last()) {
