@@ -13,6 +13,14 @@ package org.bytefred.ksat.cadical.full
  *    passed to 'set_long_option' as "--name=value" exactly as the C driver does.
  *  - The CNF file -> its content [cnfText], read with 'read_dimacs (..., strict = 1)'.
  *  - The assumptions file -> [assumptions] (zeros are skipped as in the driver).
+ *  - Each '--limit:<name>=<n>' argument -> one pair of [limits], passed to 'Solver::limit'
+ *    (name, n) in the given order after the assumptions, right before 'solve', as the C
+ *    driver does; an unknown name throws "error: invalid limit '--limit:<name>=<n>'".
+ *  - '--proof=<path>' -> [proofOut]: 'trace_proof' to that byte sink right after the options
+ *    (format by the proof options in [options], e.g. binary=0, lrat=1) and
+ *    'close_proof_trace' right after 'solve'. [lstrace] = false models LSTRACE unset (as the
+ *    proof comparison runs the C driver): no 'Internal.trace', no [ShadowTracer], no RESULT /
+ *    MODEL lines.
  *  - The C driver prints 'error: ...' to stderr and exits with 1 on an invalid configuration,
  *    option or CNF; here these throw [IllegalArgumentException] with the same message.
  *  - 's SATISFIABLE' / 's UNSATISFIABLE' / 's UNKNOWN' are not part of the trace (the
@@ -23,12 +31,16 @@ internal fun runShadow(
     config: String?,
     options: List<Pair<String, Int>>,
     assumptions: IntArray?,
+    limits: List<Pair<String, Int>> = emptyList(),
     sink: (String) -> Unit,
+    proofOut: FileSink? = null,
+    lstrace: Boolean = true,
 ): Int {
     val traceSink = TraceSink { sink(it) }
 
     val solver = Solver()
-    solver.internal.trace = traceSink
+    if (lstrace)
+        solver.internal.trace = traceSink
     if (config != null && !solver.configure(config))
         throw IllegalArgumentException("error: invalid configuration '$config'")
     for ((name, value) in options) {
@@ -37,8 +49,12 @@ internal fun runShadow(
             throw IllegalArgumentException("error: invalid option '$opt'")
     }
 
+    if (proofOut != null)
+        solver.traceProof(proofOut, "<stdout>")
+
     val tracer = ShadowTracer(traceSink)
-    solver.connectProofTracer(tracer, false, false)
+    if (lstrace)
+        solver.connectProofTracer(tracer, false, false)
 
     val vars = IntRef(0)
     val err = solver.readDimacs(cnfText, "<cnf>", vars, 1)
@@ -51,7 +67,15 @@ internal fun runShadow(
                 solver.assume(lit)
     }
 
+    for ((name, n) in limits)
+        if (!solver.limit(name, n))
+            throw IllegalArgumentException("error: invalid limit '--limit:$name=$n'")
+
     val res = solver.solve()
+    if (proofOut != null)
+        solver.closeProofTrace()
+    if (!lstrace)
+        return res
 
     if (res == 10) {
         sink("RESULT SAT")

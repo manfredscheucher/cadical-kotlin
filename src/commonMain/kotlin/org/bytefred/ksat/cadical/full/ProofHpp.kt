@@ -446,16 +446,3 @@ internal class Proof(
 
     // 'void flush ()' is declared in proof.hpp but never defined or called upstream: not ported.
 }
-
-/*
- * Forward declaration of upstream 'class LratBuilder' (lratbuilder.hpp, proof wave): only
- * the members 'Proof' calls. 'add_clause_get_proof' returns a reference to the builder's
- * chain, which 'Proof' copies into 'proof_chain'.
- */
-internal interface LratBuilder {
-    fun addOriginalClause(id: Long, c: List<Int>)
-
-    fun deleteClause(id: Long, c: List<Int>)
-
-    fun addClauseGetProof(id: Long, c: List<Int>): List<Long>
-}

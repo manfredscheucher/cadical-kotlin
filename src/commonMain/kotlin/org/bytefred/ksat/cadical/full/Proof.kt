@@ -4,10 +4,7 @@ package org.bytefred.ksat.cadical.full
  * proof.cpp: the 'Internal::' functions (connecting proof tracers). The members of
  * 'class Proof' are in ProofHpp.kt (PORTING.md: a class cannot be split over files).
  *
- * Not ported yet (proof wave 2): the concrete tracers and checkers created here
- * (LratBuilder, VeripbTracer, FratTracer, LratTracer, IdrupTracer, LidrupTracer, DratTracer,
- * LratChecker, Checker). Each place that would construct one fails loudly with 'error'; the
- * surrounding control flow is translated, so porting a tracer only replaces that line.
+ * 'DeferDeletePtr' (deleting the checker if 'connect' throws) is dropped (garbage collected).
  */
 
 /*------------------------------------------------------------------------*/
@@ -24,8 +21,9 @@ internal fun Internal.newProofOnDemand() {
 internal fun Internal.setupLratBuilder() {
     if (lratbuilder != null) return
     if (opts.externallrat != 0) {
-        // upstream: lratbuilder = new LratBuilder (this); proof->connect (lratbuilder);
-        error("LratBuilder (opts.externallrat) is not ported yet")
+        val lb = LratBuilder(this)
+        lratbuilder = lb
+        proof!!.connect(lb)
     }
 }
 
@@ -125,31 +123,25 @@ internal fun Internal.trace(file: File) {
     if (opts.veripb != 0) {
         val antecedents = opts.veripb == 1 || opts.veripb == 2
         val deletions = opts.veripb == 2 || opts.veripb == 4
-        // upstream: FileTracer *ft = new VeripbTracer (this, file, opts.binary,
-        //   antecedents, deletions); connect_proof_tracer (ft, antecedents);
-        error("VeripbTracer is not ported yet (file=$file antecedents=$antecedents deletions=$deletions)")
+        val ft: FileTracer = VeripbTracer(this, file, opts.binary != 0, antecedents, deletions)
+        connectProofTracer(ft, antecedents)
     } else if (opts.frat != 0) {
         val antecedents = opts.frat == 1
         resizeUnitClausesIdx()
-        // upstream: FileTracer *ft = new FratTracer (this, file, opts.binary,
-        //   opts.frat == 1); connect_proof_tracer (ft, antecedents, true);
-        error("FratTracer is not ported yet (file=$file antecedents=$antecedents)")
+        val ft: FileTracer = FratTracer(this, file, opts.binary != 0, opts.frat == 1)
+        connectProofTracer(ft, antecedents, true)
     } else if (opts.lrat != 0) {
-        // upstream: FileTracer *ft = new LratTracer (this, file, opts.binary);
-        //   connect_proof_tracer (ft, true);
-        error("LratTracer is not ported yet (file=$file)")
+        val ft: FileTracer = LratTracer(this, file, opts.binary != 0)
+        connectProofTracer(ft, true)
     } else if (opts.idrup != 0) {
-        // upstream: FileTracer *ft = new IdrupTracer (this, file, opts.binary);
-        //   connect_proof_tracer (ft, true);
-        error("IdrupTracer is not ported yet (file=$file)")
+        val ft: FileTracer = IdrupTracer(this, file, opts.binary != 0)
+        connectProofTracer(ft, true)
     } else if (opts.lidrup != 0) {
-        // upstream: FileTracer *ft = new LidrupTracer (this, file, opts.binary);
-        //   connect_proof_tracer (ft, true);
-        error("LidrupTracer is not ported yet (file=$file)")
+        val ft: FileTracer = LidrupTracer(this, file, opts.binary != 0)
+        connectProofTracer(ft, true)
     } else {
-        // upstream: FileTracer *ft = new DratTracer (this, file, opts.binary);
-        //   connect_proof_tracer (ft, false);
-        error("DratTracer is not ported yet (file=$file)")
+        val ft: FileTracer = DratTracer(this, file, opts.binary != 0)
+        connectProofTracer(ft, false)
     }
 }
 
@@ -158,15 +150,17 @@ internal fun Internal.trace(file: File) {
 internal fun Internal.check() {
     newProofOnDemand()
     if (opts.checkproof > 1) {
-        // upstream: StatTracer *lratchecker = new LratChecker (this); force_lrat ();
-        //   frat = true; resize_unit_clauses_idx (); proof->connect (lratchecker);
-        //   stat_tracers.push_back (lratchecker);
-        error("LratChecker (opts.checkproof=${opts.checkproof}) is not ported yet")
+        val lratchecker: StatTracer = LratChecker(this)
+        forceLrat()
+        frat = true
+        resizeUnitClausesIdx()
+        proof!!.connect(lratchecker)
+        statTracers.add(lratchecker)
     }
     if (opts.checkproof == 1 || opts.checkproof == 3) {
-        // upstream: StatTracer *checker = new Checker (this); proof->connect (checker);
-        //   stat_tracers.push_back (checker);
-        error("Checker (opts.checkproof=${opts.checkproof}) is not ported yet")
+        val checker: StatTracer = Checker(this)
+        proof!!.connect(checker)
+        statTracers.add(checker)
     }
 }
 

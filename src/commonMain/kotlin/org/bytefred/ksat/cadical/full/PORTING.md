@@ -137,7 +137,7 @@ full vocabulary, `trace.patch` the exact print sites). Every `+` line of `trace.
 ## Proofs and LRAT
 
 Proof tracing (proof.cpp, checker, LRAT builder/checker, DRAT/LRAT/FRAT/VeriPB/IDRUP tracers)
-is a later wave. Keep every call site: `if (proof) proof->add_derived_clause (...)` ->
+is ported (one file per upstream pair, output through `File` to a byte `FileSink`). Keep every call site: `if (proof) proof->add_derived_clause (...)` ->
 `proof?.addDerivedClause (...)` against the `Proof` interface (ProofHpp.kt); `Internal.proof`
 is null by default as upstream. Translate `if (lrat)` / `if (frat)` blocks and the chain
 building (`lratChain`, `unitClausesIdx`, ...) fully: it is solver code and off by default.
@@ -151,6 +151,6 @@ building (`lratChain`, `unitClausesIdx`, ...) fully: it is solver code and off b
 | averages.cpp, limit.cpp, queue.cpp, util.cpp | `Averages.kt`, `Limit.kt`, `Queue.kt`, `Util.kt` | done |
 | analyze, assume, backtrack, backward, bins, block, clause, collect, compact, condition, constrain, cover, decide, decompose, deduplicate, elim, extend, external, external_propagate, flags, flip, gates, instantiate, internal, lookahead, lucky, minimize, occs, phases, probe, propagate, reduce, rephase, restart, restore, score, shrink, solution, subsume, ternary, transred, var, vivify, walk, watch | `<Name>.kt` | next wave |
 | solver.cpp (+ contract.cpp) | `Solver.kt` | after the next wave |
-| proof, checker, lratbuilder, lratchecker, drattracer, lrattracer, frattracer, veripbtracer, idruptracer, lidruptracer | `<Name>.kt` | later wave (proofs) |
+| proof, checker, lratbuilder, lratchecker, drattracer, lrattracer, frattracer, veripbtracer, idruptracer, lidruptracer | `<Name>.kt` (proof.cpp: `Proof.kt` + `ProofHpp.kt`) | done (proof wave); bytes checked by `FullProofTest` |
 | message, report, profile, resources, format, terminal, signal, logging, version, stats (print), file, parse | none | not ported (output / OS); parse.cpp only if DIMACS parsing is needed |
 | mobical, cadical, ccadical, ipasir | none | out of scope (not the solver) |

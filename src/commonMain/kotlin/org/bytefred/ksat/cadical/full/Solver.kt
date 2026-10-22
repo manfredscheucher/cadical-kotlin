@@ -23,7 +23,7 @@ import org.bytefred.ksat.cadical.full.isValidLimit as internalIsValidLimit
  *    and 'verbose' are dropped. 'statistics' calls 'Internal.printStatistics' as upstream. 'error' throws.
  *  - Reading and writing files by path or 'FILE *' (OS I/O) -> the same functions on an
  *    in-memory text ([readDimacs], [readSolution]) or an [Appendable] ([writeDimacs],
- *    [writeExtension], [traceProof]) through [File]. 'trace_proof (const char *path)'
+ *    [writeExtension], [traceProof]) or a byte [FileSink] ([traceProof]) through [File]. 'trace_proof (const char *path)'
  *    (opens the file by path) is not ported.
  *  - 'const char *' error results -> String? (null = success).
  *  - 'Solver::CubesWithStatus' -> [CubesWithStatus] (deep copy as the C++ struct copy).
@@ -605,7 +605,20 @@ internal class Solver {
 
     /*------------------------------------------------------------------------*/
 
-    // 'trace_proof (FILE *external_file, const char *name)' writing to [out].
+    // 'trace_proof (FILE *external_file, const char *name)' writing bytes to [out]
+    // (binary proofs are byte-identical to upstream).
+    fun traceProof(out: FileSink, name: String): Boolean {
+        requireValidState("Solver::trace_proof")
+        contractRequire(state() == CONFIGURING, "Solver::trace_proof") {
+            "can only start proof tracing to '$name' right after initialization"
+        }
+        val internalFile = File.write(name, out)
+        internal.trace(internalFile)
+        return true
+    }
+
+    // 'trace_proof (FILE *external_file, const char *name)' writing to a text sink [out]
+    // (each byte as the char with that code, see FileHpp.kt).
     fun traceProof(out: Appendable, name: String): Boolean {
         requireValidState("Solver::trace_proof")
         contractRequire(state() == CONFIGURING, "Solver::trace_proof") {
