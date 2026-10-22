@@ -1,5 +1,6 @@
 package org.bytefred.ksat.cadical
 
+import org.bytefred.ksat.Copying
 import org.bytefred.ksat.ExternalPropagation
 import org.bytefred.ksat.ExternalPropagator
 import org.bytefred.ksat.FixedAssignmentListener
@@ -26,6 +27,8 @@ import org.bytefred.ksat.cadical.full.UNSATISFIABLE
  *    between a SAT [solve] and the next call that changes the formula (e.g. [addClause]).
  *  - [failed] -> `failed (lit)` (upstream: only in the unsatisfied state).
  *  - the IPASIR-UP block, fixed listener and `phase` / `unphase` map 1:1 to the Solver calls.
+ *  - [copy] -> `copy (other)` into a fresh solver (irredundant clauses, units, options, flags;
+ *    no learned clauses, no assumptions — upstream semantics).
  *
  * Contract violations: this adapter makes no checks of its own. Every API misuse (invalid
  * literal, call in the wrong state, e.g. from a propagator callback while solving) fails in
@@ -45,7 +48,7 @@ import org.bytefred.ksat.cadical.full.UNSATISFIABLE
  */
 class CaDiCaLFull(
     numVarsHint: Int = 0,
-) : SatSolver, Traceable, ExternalPropagation, FixedListening, ForcedPhases {
+) : SatSolver, Traceable, ExternalPropagation, FixedListening, ForcedPhases, Copying {
 
     private val solver = Solver()
 
@@ -105,4 +108,8 @@ class CaDiCaLFull(
     override fun phase(lit: Int) = solver.phase(lit)
 
     override fun unphase(lit: Int) = solver.unphase(lit)
+
+    // ---- copy ----
+
+    override fun copy(): CaDiCaLFull = CaDiCaLFull().also { solver.copy(it.solver) }
 }
