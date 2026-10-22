@@ -13,9 +13,16 @@ If something cannot be mapped cleanly, stop and flag it instead of working aroun
 - Where a `.cpp` only defines members of a class from its header (Reap, EMA::update, Options,
   Arena, Stats/Limit constructors), Kotlin cannot split the class, so those members are in
   `FooHpp.kt` and `Foo.kt` holds only the rest (or does not exist).
+- Proof tracers and checkers (`drattracer`, `lrattracer`, `frattracer`, `veripbtracer`,
+  `idruptracer`, `lidruptracer`, `checker`, `lratbuilder`, `lratchecker`): the class lives in
+  `foo.hpp` and its members in `foo.cpp`, so both are in one `Foo.kt` (`DratTracer.kt`, ...),
+  without a `FooHpp.kt`. `tracer.hpp` (the interfaces only) -> `TracerHpp.kt`; `proof.hpp` /
+  `proof.cpp` -> `ProofHpp.kt` + `Proof.kt` (the usual split).
 - No upstream file: `StdVector.kt` (vector helpers), `StdSort.kt` (libc++ std::sort),
   `Refs.kt` (reference parameters), `LstraceHpp.kt` (shadow trace sink, from the reference's
-  `trace.patch`). `SIGNATURES.md`: the cross-file function contract.
+  `trace.patch`), `ShadowDriver.kt` (`main` of the shadow reference driver
+  `ksat-extra/shadow/cadical-full/driver.cpp`), `ShadowTracer.kt` (that driver's proof
+  tracer `LsTracer`). `SIGNATURES.md`: the cross-file function contract.
 
 ## Functions and names
 
@@ -77,8 +84,9 @@ If something cannot be mapped cleanly, stop and flag it instead of working aroun
   `for (lit in lits)` (Sange order).
 - Struct value semantics: `Var`, `Flags`, `Link`, `Level`, `Watch`, `Bin`, `EMA` are classes.
   `Var &v = var (lit)` -> `val v = variable (lit)` (same object, as the reference). A C++ copy
-  (`Flags f = flags (lit)`, `links[dst] = links[src]`, `const Watch w = *i` followed by a write
-  to the slot) needs `copyFrom` / `copy ()` or reading the fields into locals first.
+  (`Flags f = flags (lit)`, `const Watch w = *i` followed by a write to the slot) needs reading
+  the fields into locals first; never let two table slots alias one object. `compact`'s
+  `v[dst] = v[src]` moves the reference, which cannot alias there (see Compact.kt).
 - `swap (v, w)` of vectors -> swap the references (make the fields `var`) or element-wise.
 - `std::queue` -> `ArrayDeque`; `unordered_set` -> `HashSet` (membership only);
   `unordered_map` -> `LinkedHashMap`. Iterating an unordered container: flag it, the order
@@ -99,9 +107,27 @@ If something cannot be mapped cleanly, stop and flag it instead of working aroun
 
 ## Checks, messages, profiling
 
-- `assert (c)` -> `check (c)` (always on, loud). `#ifndef NDEBUG` blocks that only check ->
-  port them as checks; skip only ones that scan the whole database on hot paths, with a one
-  line comment saying what was skipped. `#if 0` blocks are not ported.
+- Target: upstream as built for the shadow reference, i.e. the RELEASE build (`NDEBUG`
+  defined, `LOGGING` undefined). One rule for debug code:
+  - Code under `#ifndef NDEBUG`, `#if defined(LOGGING) || !defined(NDEBUG)` and
+    `#ifdef LOGGING` is not ported (it does not exist in the reference): leave a one line
+    comment `'#ifndef NDEBUG' ...: not in release` at its place. A function whose whole body
+    is such a block stays, with an empty body (`check_clause_stats`, `check_var_stats`).
+    Variables that exist only for such code (`pushed`, `old_size`, `bits`, ...) go too,
+    including the plain asserts that read them.
+  - A plain `assert (c)` -> `check (c)` (kept, always on, loud). Upstream asserts are compiled
+    out in release too, but these are single statements stating upstream's own invariants:
+    on every execution where the port matches upstream they hold, so keeping them cannot
+    change a result, they only turn a port bug (or a state where the C++ release build would
+    silently run into undefined behaviour) into an immediate failure.
+  - Exceptions, both following release: (a) code that exists only to be asserted on is not
+    evaluated (`assert (std::for_each (... non_tautological_cube ...))` in lookahead); a loop
+    whose condition has side effects (`while (*--i) assert (...)`) keeps the loop.
+    (b) Where an assert would fail on a path the release build executes with a well defined
+    result, follow release (lookahead reads `ftab[0]`, an UNUSED `Flags`, for literal 0
+    instead of going through the asserting `vidx`).
+  - API contract checks (`REQUIRE`, contract.hpp) are always on upstream and stay.
+- `#if 0` blocks are not ported.
 - `LOG`, `PHASE`, `VERBOSE`, `MSG`, `section`, `report (...)`, `print_*`, `printf` to
   stdout -> dropped (keep argument expressions that have side effects).
   `opts.report` is 0 for library use, so `report` has no effect upstream either.
@@ -144,13 +170,18 @@ building (`lratChain`, `unitClausesIdx`, ...) fully: it is solver code and off b
 
 ## File status
 
+All solver files are ported and checked against the reference (`FullShadowTraceTest`,
+`FullLiveShadowTest`, `FullProofTest`).
+
 | upstream | Kotlin | status |
 |---|---|---|
-| all headers listed in the spec | `*Hpp.kt` | done (foundation) |
+| all headers listed in the spec | `*Hpp.kt` | done |
 | ema.cpp, random.cpp, reap.cpp, options.cpp, config.cpp, arena.cpp, stats.cpp (ctor), limit.cpp (ctors) | in `EmaHpp.kt`, `RandomHpp.kt`, `ReapHpp.kt`, `OptionsHpp.kt`, `ConfigHpp.kt`, `ArenaHpp.kt`, `StatsHpp.kt`, `LimitHpp.kt` | done |
 | averages.cpp, limit.cpp, queue.cpp, util.cpp | `Averages.kt`, `Limit.kt`, `Queue.kt`, `Util.kt` | done |
-| analyze, assume, backtrack, backward, bins, block, clause, collect, compact, condition, constrain, cover, decide, decompose, deduplicate, elim, extend, external, external_propagate, flags, flip, gates, instantiate, internal, lookahead, lucky, minimize, occs, phases, probe, propagate, reduce, rephase, restart, restore, score, shrink, solution, subsume, ternary, transred, var, vivify, walk, watch | `<Name>.kt` | next wave |
-| solver.cpp (+ contract.cpp) | `Solver.kt` | after the next wave |
-| proof, checker, lratbuilder, lratchecker, drattracer, lrattracer, frattracer, veripbtracer, idruptracer, lidruptracer | `<Name>.kt` (proof.cpp: `Proof.kt` + `ProofHpp.kt`) | done (proof wave); bytes checked by `FullProofTest` |
-| message, report, profile, resources, format, terminal, signal, logging, version, stats (print), file, parse | none | not ported (output / OS); parse.cpp only if DIMACS parsing is needed |
+| analyze, assume, backtrack, backward, bins, block, clause, collect, compact, condition, constrain, cover, decide, decompose, deduplicate, elim, extend, external, external_propagate, flags, flip, gates, instantiate, internal, lookahead, lucky, minimize, occs, phases, probe, propagate, reduce, rephase, restart, restore, score, shrink, solution, subsume, ternary, transred, var, vivify, walk, watch | `<Name>.kt` | done |
+| solver.cpp (+ contract.cpp) | `Solver.kt` (+ `ContractHpp.kt`) | done |
+| proof, checker, lratbuilder, lratchecker, drattracer, lrattracer, frattracer, veripbtracer, idruptracer, lidruptracer | `<Name>.kt` (proof.cpp: `Proof.kt` + `ProofHpp.kt`) | done; bytes checked by `FullProofTest` |
+| parse.hpp + parse.cpp | `Parse.kt` | done (DIMACS for the shadow driver) |
+| message, report, profile, resources, format, terminal, signal, logging, version, stats (print), file (OS part) | none | not ported (output / OS) |
 | mobical, cadical, ccadical, ipasir | none | out of scope (not the solver) |
+| (no upstream) shadow driver `driver.cpp` + its `LsTracer` | `ShadowDriver.kt`, `ShadowTracer.kt` | test reference driver |

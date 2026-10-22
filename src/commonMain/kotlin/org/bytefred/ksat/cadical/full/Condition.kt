@@ -13,7 +13,8 @@ import org.bytefred.ksat.cadical.IntArrayList
  *    double, multiply, truncate with 'toLong ()'.
  *  - LOG / PHASE messages and 'report' are dropped; the '#ifndef QUIET' counters 'props',
  *    'watched', 'untried' only feed PHASE messages and are dropped too.
- *  - The '#if defined(LOGGING) || !defined(NDEBUG)' consistency checks are ported as checks.
+ *  - The '#if defined(LOGGING) || !defined(NDEBUG)' and '#ifndef NDEBUG' code (counters and
+ *    consistency scans) is not in the release reference and not ported (PORTING.md).
  */
 
 /*------------------------------------------------------------------------*/
@@ -168,7 +169,7 @@ internal fun Internal.conditionRound(unassignedLiteralPropagationLimit: Long): L
 
     protectReasons()
 
-    var additionallyAssigned = 0
+    // '#if defined(LOGGING) || !defined(NDEBUG)' counter 'additionally_assigned': not in release.
 
     for (idx in 1..maxVar) {
         val tmp = value(idx)
@@ -197,7 +198,6 @@ internal fun Internal.conditionRound(unassignedLiteralPropagationLimit: Long): L
             conditionAssign(lit)
             v.level = level
             trail.add(lit)
-            additionallyAssigned++
         }
     }
 
@@ -362,9 +362,7 @@ internal fun Internal.conditionRound(unassignedLiteralPropagationLimit: Long): L
         }
     } // End of loop over all clauses to collect candidates etc.
 
-    // '#ifdef LOGGING' loop over 'conditional' (logging plus this assert; the trail loop
-    // there only logs):
-    for (i in 0 until conditional.size) check(isConditionalLiteral(conditional[i])) { "condition: initial conditional" }
+    // '#ifdef LOGGING' loops (logging plus an assert): not in release.
     check(initial.conditional == conditional.size.toLong()) { "condition: conditional size mismatch" }
     check(initial.assigned == initial.conditional + initial.autarky) { "condition: initial partition mismatch" }
 
@@ -619,35 +617,8 @@ internal fun Internal.conditionRound(unassignedLiteralPropagationLimit: Long): L
 
         check(remain.assigned - remain.conditional == remain.autarky) { "condition: remain partition mismatch" }
 
-        // This is a sanity check, that the size of our implicit representation
-        // of the autarky part matches our 'remain' counts.  We need the same
-        // code for determining autarky literals as in the loop below which adds
-        // autarky literals to the extension stack.
-        //
-        run {
-            var checkAssigned = 0L
-            var checkConditional = 0L
-            var checkAutarky = 0L
-            for (k in 0 until trail.size) {
-                val lit = trail[k]
-                if (value(lit) != 0) {
-                    checkAssigned++
-                    if (isConditionalLiteral(lit)) {
-                        check(!isAutarkyLiteral(lit)) { "condition: conditional is autarky" }
-                        checkConditional++
-                    } else {
-                        check(isAutarkyLiteral(lit)) { "condition: assigned neither conditional nor autarky" }
-                        checkAutarky++
-                    }
-                } else {
-                    check(!isAutarkyLiteral(lit)) { "condition: unassigned autarky" }
-                    check(!isConditionalLiteral(lit)) { "condition: unassigned conditional" }
-                }
-            }
-            check(remain.assigned == checkAssigned) { "condition: remain assigned mismatch" }
-            check(remain.conditional == checkConditional) { "condition: remain conditional mismatch" }
-            check(remain.autarky == checkAutarky) { "condition: remain autarky mismatch" }
-        }
+        // '#if defined(LOGGING) || !defined(NDEBUG)' sanity check of the implicit autarky
+        // representation against the 'remain' counts (trail scan): not in release.
 
         // Success if an autarky literal is left in the clause and
         // we did not abort the loop too early because the propagation
@@ -730,14 +701,13 @@ internal fun Internal.conditionRound(unassignedLiteralPropagationLimit: Long): L
 
     // Unassign additionally assigned literals.
     //
-    var additionallyUnassigned = 0
+    // '#if defined(LOGGING) || !defined(NDEBUG)' counter 'additionally_unassigned' and the
+    // assert comparing it: not in release.
     while (trail.size > initialTrailLevel) {
         val lit = trail.back()
         trail.removeLast()
         conditionUnassign(lit)
-        additionallyUnassigned++
     }
-    check(additionallyUnassigned == additionallyAssigned) { "condition: unassigned count mismatch" }
 
     if (level > initialLevel) {
         level = initialLevel
@@ -755,7 +725,7 @@ internal fun Internal.conditionRound(unassignedLiteralPropagationLimit: Long): L
         if (tmp == 0) conditionAssign(lit)
     }
 
-    for (k in 0 until trail.size) check(marked(trail[k]) == 0) { "condition: marked literal on trail" }
+    // '#ifndef NDEBUG' check that no trail literal is marked: not in release.
 
     unprotectReasons()
 

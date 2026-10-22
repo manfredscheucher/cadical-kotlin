@@ -37,6 +37,8 @@ internal class CheckerWatch(
     constructor(b: Int, c: CheckerClause) : this(b, c.size, c)
 }
 
+// 'uint64_t nonces[]' -> ULongArray (the 'ExperimentalUnsignedTypes' API).
+@OptIn(ExperimentalUnsignedTypes::class)
 internal class Checker(
     private var internal: Internal,
 ) : StatTracer {

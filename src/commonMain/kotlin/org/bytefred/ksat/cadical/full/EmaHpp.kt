@@ -54,15 +54,6 @@ internal class EMA {
         }
         value = newValue
     }
-
-    /** C++ struct assignment / 'swap' helper: copies all fields of [other]. */
-    fun copyFrom(other: EMA) {
-        value = other.value
-        biased = other.biased
-        alpha = other.alpha
-        beta = other.beta
-        exp = other.exp
-    }
 }
 
 /** INIT_EMA (E, WINDOW). */

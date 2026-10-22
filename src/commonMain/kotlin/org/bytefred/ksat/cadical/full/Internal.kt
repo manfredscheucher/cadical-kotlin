@@ -91,15 +91,7 @@ internal fun Internal.initVars(newMaxVar: Int) {
     // New variables can be created that can invoke enlarge anytime (via calls
     // during ipasir-up call-backs), thus assuming (!level) is not correct
     if (newMaxVar >= vsize) enlarge(newMaxVar)
-    // #ifndef NDEBUG
-    for (i in -newMaxVar until -maxVar) check(vals[vsize + i].toInt() == 0) { "vals[$i] set" }
-    for (i in maxVar + 1..newMaxVar) {
-        check(vals[vsize + i].toInt() == 0) { "vals[$i] set" }
-        check(btab[i] == 0L) { "btab[$i] set" }
-        check(gtab[i] == 0L) { "gtab[$i] set" }
-    }
-    for (i in 2 * (maxVar + 1)..2 * newMaxVar + 1) check(ptab[i] == -1) { "ptab[$i] set" }
-    // #endif
+    // '#ifndef NDEBUG' check that the new table slots are cleared: not in the release reference.
     check(btab[0] == 0L) { "btab[0] set" }
     val oldMaxVar = maxVar
     maxVar = newMaxVar

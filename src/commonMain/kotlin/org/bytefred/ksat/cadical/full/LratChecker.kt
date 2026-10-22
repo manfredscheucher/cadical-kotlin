@@ -25,6 +25,8 @@ internal class LratCheckerClause(
     val literals: IntArray, // 'literals' of length 'size'
 )
 
+// 'uint64_t nonces[]' -> ULongArray (the 'ExperimentalUnsignedTypes' API).
+@OptIn(ExperimentalUnsignedTypes::class)
 internal class LratChecker(
     private var internal: Internal?,
 ) : StatTracer {

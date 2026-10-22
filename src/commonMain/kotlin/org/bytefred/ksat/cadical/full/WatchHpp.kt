@@ -23,8 +23,6 @@ internal class Watch(
     var size: Int = clause.size,
 ) {
     fun binary(): Boolean = size == 2
-
-    fun copy(): Watch = Watch(blit, clause, size)
 }
 
 internal typealias Watches = ArrayList<Watch>

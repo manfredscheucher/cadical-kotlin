@@ -241,7 +241,7 @@ internal fun Internal.blockPureLiteral(blocker: Blocker, lit: Int) {
     val nos = occs(-lit)
 
     check(noccs(-lit) == 0L) { "blockPureLiteral: negative occurrences" }
-    for (k in 0 until nos.size) check(nos[k].garbage) { "blockPureLiteral: non-garbage negative" }
+    // '#ifndef NDEBUG' check that all clauses in 'nos' are garbage: not in release.
     stats.blockpurelits++
     for (n in 0 until pos.size) {
         val c = pos[n]

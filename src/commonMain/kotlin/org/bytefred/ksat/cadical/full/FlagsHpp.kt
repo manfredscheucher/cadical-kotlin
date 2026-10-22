@@ -6,7 +6,8 @@ package org.bytefred.ksat.cadical.full
  * Mapping: 'bool x : 1' -> Boolean; 'unsigned char x : 2' / ': 3' -> Int. Upstream only stores
  * values that fit the bit width (block/skip/assumed/failed/decompose are sets of 'bign' bits
  * 1 and 2, status is one of the constants below), so no truncation is needed.
- * C++ struct assignment 'a = b' copies: use [copyFrom], never alias two table slots.
+ * C++ struct assignment 'a = b' copies: never alias two table slots ('compact' moves the
+ * references without aliasing, see Compact.kt).
  */
 internal class Flags {
     // The first set of flags is related to 'analyze' and 'minimize'.
@@ -52,27 +53,6 @@ internal class Flags {
         dst.subsume = subsume
         dst.ternary = ternary
         dst.block = block
-    }
-
-    /** C++ struct assignment 'this = other' (all bit fields). */
-    fun copyFrom(other: Flags) {
-        seen = other.seen
-        keep = other.keep
-        poison = other.poison
-        removable = other.removable
-        shrinkable = other.shrinkable
-        added = other.added
-        ignorepos = other.ignorepos
-        ignoreneg = other.ignoreneg
-        elim = other.elim
-        subsume = other.subsume
-        ternary = other.ternary
-        decompose = other.decompose
-        block = other.block
-        skip = other.skip
-        assumed = other.assumed
-        failed = other.failed
-        status = other.status
     }
 
     companion object {

@@ -27,17 +27,8 @@ internal fun Internal.resetShrinkable() {
 }
 
 internal fun Internal.markShrinkableAsRemovable(blevel: Int, minimizedStart: Int) {
-    // '#ifndef NDEBUG'
-    var minimizedStart = minimizedStart
-    while (minimizedStart < minimized.size) {
-        val lit = minimized[minimizedStart]
-        val f = flags(lit)
-        val v = variable(lit)
-        if (v.level == blevel) {
-            check(!f.poison)
-        }
-        ++minimizedStart
-    }
+    // '#ifndef NDEBUG' upstream: scan of 'minimized' from 'minimized_start' (poison check),
+    // not in release, where 'blevel' and 'minimized_start' are unused ('(void)').
 
     for (k in 0 until shrinkable.size) {
         val lit = shrinkable[k]
@@ -186,8 +177,7 @@ internal fun Internal.pushLiteralsOfBlock(
         check(!flags(clause[p]).keep)
         val lit = clause[p]
         // LOG: pushing lit of blevel
-        val tmp = shrinkLiteral(lit, blevel, maxTrail)
-        check(tmp > 0)
+        shrinkLiteral(lit, blevel, maxTrail) // 'int tmp =' and 'assert (tmp > 0)' are debug-only
         --p
     }
 }
@@ -207,9 +197,8 @@ internal fun Internal.shrinkNext(blevel: Int, open: IntRef, maxTrail: IntRef): I
         return uip
     } else {
         var uip: Int
-        val initMaxTrail = maxTrail.value
+        // '#ifndef NDEBUG' upstream: 'init_max_trail' and the assert on it, not in release.
         do {
-            check(maxTrail.value <= initMaxTrail)
             uip = t[maxTrail.value--]
         } while (!flags(uip).shrinkable)
         --open.value
@@ -227,10 +216,9 @@ internal fun Internal.shrinkAlongReason(
 ): Int {
     // LOG: shrinking along the reason of lit
     var open = 0
-    val f = flags(uip)
+    // '#ifndef NDEBUG' upstream: 'f = flags (uip)' and 'assert (f.shrinkable)', not in release.
     val v = variable(uip)
 
-    check(f.shrinkable)
     check(v.level == blevel)
     check(v.reason != null)
 
@@ -420,7 +408,7 @@ internal fun Internal.shrinkAndMinimizeClause() {
     }
 
     // LOG: post shrink pass (with uips, not removed) first UIP clause
-    val oldSize = clause.size
+    // '#if defined(LOGGING) || !defined(NDEBUG)' upstream: 'old_size', not in release.
     val stack = IntArrayList()
     run {
         var i = 1
@@ -447,7 +435,7 @@ internal fun Internal.shrinkAndMinimizeClause() {
         }
         clause.resize(i)
     }
-    check(oldSize.toLong() == clause.size.toLong() + totalShrunken.value.toUInt().toLong() + totalMinimized.value.toUInt().toLong())
+    // 'assert (old_size == ...)' on the debug-only 'old_size': not in release.
     // LOG: after shrinking first UIP clause, clause shrunken by literals
 
     stats.shrunken += totalShrunken.value.toUInt().toLong()

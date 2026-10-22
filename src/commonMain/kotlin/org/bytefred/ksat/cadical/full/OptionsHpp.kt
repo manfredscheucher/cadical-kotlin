@@ -39,7 +39,7 @@ internal class Options {
     init {
         // The table is rebuilt in every constructor as upstream (it reads 'reportdefault').
         table = buildTable()
-        check(table.size == NUMBER_OF_OPTIONS)
+        // '#ifndef NDEBUG' consistency asserts ('i == number_of_options', '!has (...)'): not in release.
         var prev = ""
         for (i in 0 until NUMBER_OF_OPTIONS) {
             val o = table[i]

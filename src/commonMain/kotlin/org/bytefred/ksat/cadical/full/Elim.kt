@@ -563,7 +563,7 @@ internal fun Internal.markEliminatedClausesAsGarbage(
     check(!unsat) { "markEliminatedClausesAsGarbage: unsat" }
 
     val substitute = eliminator.gates.size.toLong()
-    var pushed = 0L // '#ifndef NDEBUG' counter, only checked
+    // '#ifndef NDEBUG' upstream: counter 'pushed' (only asserted below), not in release.
     val ps = occs(pivot)
     for (m in 0 until ps.size) {
         val c = ps[m]
@@ -573,7 +573,6 @@ internal fun Internal.markEliminatedClausesAsGarbage(
             proof?.weakenMinus(c)
             if (c.size == 2) deletedBinaryClause.value = true
             external!!.pushClauseOnExtensionStack(c, pivot)
-            pushed++
         }
         markGarbage(c)
         elimUpdateRemovedClause(eliminator, c, pivot)
@@ -589,14 +588,13 @@ internal fun Internal.markEliminatedClausesAsGarbage(
             proof?.weakenMinus(d)
             if (d.size == 2) deletedBinaryClause.value = true
             external!!.pushClauseOnExtensionStack(d, -pivot)
-            pushed++
         }
         markGarbage(d)
         elimUpdateRemovedClause(eliminator, d, -pivot)
     }
     eraseOccs(ns)
 
-    if (substitute != 0L) check(pushed <= substitute) { "markEliminatedClausesAsGarbage: pushed" }
+    // 'if (substitute) assert (pushed <= substitute)': empty in release.
 
     // Unfortunately, we can not use the trick by Niklas Soerensson anymore,
     // which avoids saving all clauses on the extension stack.  This would

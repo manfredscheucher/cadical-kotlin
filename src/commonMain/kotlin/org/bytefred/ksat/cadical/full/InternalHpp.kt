@@ -220,14 +220,7 @@ internal class Internal {
 
     fun active(): Int {
         val res = stats.active.toInt()
-        var tmp = maxVar.toLong()
-        tmp -= stats.unused
-        tmp -= stats.now.fixed
-        tmp -= stats.now.eliminated
-        tmp -= stats.now.substituted
-        tmp -= stats.now.pure
-        check(tmp >= 0)
-        check(tmp == res.toLong())
+        // '#ifndef NDEBUG' upstream: recount from the 'stats.now' counters, not in release.
         return res
     }
 
@@ -316,12 +309,10 @@ internal class Internal {
         val idx = vidx(lit)
         val mask = 0x3f
         val m = marks[idx].toInt()
-        val bits = m and mask
-        val newM = ((m and mask) or (sign(lit) shl 6)).toByte()
-        marks[idx] = newM
+        // '#ifndef NDEBUG' upstream: 'bits' and the assert on it, not in release.
+        marks[idx] = ((m and mask) or (sign(lit) shl 6)).toByte()
         check(marked(lit) > 0)
         check(marked(-lit) < 0)
-        check((newM.toInt() and mask) == bits)
         check(marked67(lit) > 0)
         check(marked67(-lit) < 0)
     }
@@ -329,9 +320,8 @@ internal class Internal {
     fun unmark67(lit: Int) {
         val idx = vidx(lit)
         val mask = 0x3f
-        val bits = marks[idx].toInt() and mask
+        // '#ifndef NDEBUG' upstream: 'bits' and the assert on it, not in release.
         marks[idx] = (marks[idx].toInt() and mask).toByte()
-        check((marks[idx].toInt() and mask) == bits)
     }
 
     fun unmark(lits: IntArrayList) {

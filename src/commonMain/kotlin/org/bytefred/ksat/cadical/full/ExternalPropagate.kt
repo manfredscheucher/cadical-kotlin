@@ -19,7 +19,7 @@ import org.bytefred.ksat.cadical.IntArrayList
  *    external clauses, and the callers (assume.cpp, analyze.cpp, ...) test for that.
  *  - 'size_t new_level' -> Int (a negative value stands for a huge 'size_t').
  *  - 'get_merged_literals' / 'get_all_fixed_literals' are '#ifndef NDEBUG' debugging helpers
- *    for mobical; ported anyway (they only read).
+ *    for mobical: not in release, not ported (PORTING.md).
  */
 
 /*----------------------------------------------------------------------------*/
@@ -259,7 +259,7 @@ internal fun Internal.externalPropagate(): Boolean {
             if (elit < 0)
                 ilit = -ilit
             val tmp = value(ilit)
-            check(fixed(ilit) != 0 || observed(ilit)) { "external_propagate: not observed" }
+            // '#ifndef NDEBUG' upstream: 'assert (fixed (ilit) || observed (ilit))', not in release.
             if (tmp == 0) {
                 // variable is not assigned, it can be propagated
                 if (level == 0) {
@@ -655,20 +655,8 @@ internal fun Internal.learnExternalReasonClause(
 
     addExternalClause(elit, noBacktrack)
 
-    val newest = newestClause
-    if (falsifiedElit == 0 && newest != null) {
-        // Check if external propagation is correct wrt to the topological order
-        // defined by the trail. In case it is a falsified external propagation
-        // step, the order does not matter, the reason simply supposed to be a
-        // falsified clause.
-        val propagatedIlit = ilit
-        for (k in 0 until newest.size) {
-            val reasonIlit = newest.literals[k]
-            check(variable(reasonIlit).trail <= variable(propagatedIlit).trail) {
-                "learn_external_reason_clause: reason not in trail order"
-            }
-        }
-    }
+    // '#ifndef NDEBUG' upstream (trail-order check of the propagator's reason): not in the
+    // release reference, not ported.
 
     clause.assign(clauseTmp) // clause = std::move (clause_tmp)
     return newestClause
@@ -1044,22 +1032,9 @@ internal fun Internal.markGarbageExternalForgettable(id: Long) {
 // Check that the literals in the clause are properly ordered. Used only
 // internally for debug purposes.
 //
+// (Its only call, in clause.cpp, is '#ifndef NDEBUG': never called in the release build.)
 internal fun Internal.checkWatchedLiteralInvariants() {
-    run {
-        var v0 = 0
-        var v1 = 0
-
-        if (value(clause[0]) > 0)
-            v0 = 1
-        else if (value(clause[0]) < 0)
-            v0 = -1
-
-        if (value(clause[1]) > 0)
-            v1 = 1
-        else if (value(clause[1]) < 0)
-            v1 = -1
-        check(v0 >= v1) { "check_watched_literal_invariants: watch values" }
-    }
+    // '#ifndef NDEBUG' upstream (watch value order 'v0 >= v1'): not in release.
     if (value(clause[0]) > 0) {
         if (value(clause[1]) > 0) { // Case 1: Both literals are satisfied
             // They are ordered by lower to higher decision level
@@ -1128,72 +1103,6 @@ internal fun Internal.checkWatchedLiteralInvariants() {
     }
 }
 
-// '#ifndef NDEBUG' in upstream (debugging helpers for mobical).
+// 'get_merged_literals' / 'get_all_fixed_literals': '#ifndef NDEBUG' debugging helpers for
+// mobical upstream, not in release, not ported.
 
-/*----------------------------------------------------------------------------*/
-//
-// An expensive function that can be used for deep-debug trail-related
-// issues in mobical. Do not use it unless it is really unavoidable.
-//
-// eq_class contains all the merged external literals that are currently
-// compacted to the internal literal of trail[0] and return true.
-//
-// In case trail[0] does not exists or is not on the root level, the
-// function returns false (indicating that there was no merger literal
-// found).
-//
-internal fun Internal.getMergedLiterals(eqClass: IntArrayList): Boolean {
-    val external = external!!
-    eqClass.clear()
-
-    if (trail.size == 0)
-        return false
-
-    val ilit = trail[0]
-    val litLevel = variable(ilit).level
-
-    if (litLevel == 0) {
-        // Collect all the variables that are merged and mapped to that ilit
-        val e2iSize = external.e2i.size
-        val ivar = abs(ilit)
-        for (i in 0 until e2iSize) {
-            val other = abs(external.e2i[i])
-            if (other == ivar) {
-                if (external.e2i[i] == ilit)
-                    eqClass.add(i)
-                else
-                    eqClass.add(-1 * i)
-            }
-        }
-
-        return true
-    }
-
-    return false
-}
-
-/*----------------------------------------------------------------------------*/
-//
-// Collect all external variables that are FIXED internally. Again an
-// expensive function that should be called only for debugging in mobical.
-//
-// Do not use it unless it is really unavoidable.
-//
-internal fun Internal.getAllFixedLiterals(fixedLits: IntArrayList) {
-    val external = external!!
-    fixedLits.clear()
-    if (trail.size == 0)
-        return
-
-    val e2iSize = external.e2i.size
-    var ilit: Int
-    for (eidx in 1 until e2iSize) {
-        ilit = external.e2i[eidx]
-        if (ilit != 0) {
-            val f = flags(ilit)
-            if (f.status == Flags.FIXED) {
-                fixedLits.add(vals[vsize + abs(ilit)] * eidx)
-            }
-        }
-    }
-}

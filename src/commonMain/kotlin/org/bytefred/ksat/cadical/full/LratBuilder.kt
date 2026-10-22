@@ -33,6 +33,8 @@ internal class LratBuilderWatch(
     constructor(b: Int, c: LratBuilderClause) : this(b, c.size, c)
 }
 
+// 'uint64_t nonces[]' -> ULongArray (the 'ExperimentalUnsignedTypes' API).
+@OptIn(ExperimentalUnsignedTypes::class)
 internal class LratBuilder(
     private val internal: Internal,
 ) {

@@ -46,7 +46,7 @@ internal class LratTracer(
 
     private fun putBinaryId(id: Long) {
         check(binary)
-        check(id.toULong() != (0uL.inv() shr 1))
+        // '#ifndef NDEBUG' upstream: 'assert ((uint64_t) id != (~0 >> 1))', not in release.
         val u: ULong = if (id < 0) (-id).toULong() else id.toULong()
         check(u < (1uL shl 63))
         var x: ULong = 2uL * u + (if (id < 0) 1uL else 0uL)

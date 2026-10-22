@@ -16,6 +16,8 @@ internal class LidrupClause(
     val literals = ArrayList<Int>()
 }
 
+// 'uint64_t nonces[]' -> ULongArray (the 'ExperimentalUnsignedTypes' API).
+@OptIn(ExperimentalUnsignedTypes::class)
 internal class LidrupTracer(
     private var internal: Internal,
     private val file: File,

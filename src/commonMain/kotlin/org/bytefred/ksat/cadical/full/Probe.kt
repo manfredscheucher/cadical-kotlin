@@ -239,14 +239,7 @@ internal fun Internal.hyperBinaryResolve(reason: Clause): Int {
     val end = reason.size
     val lits = reason.literals
     var k: Int
-    // #ifndef NDEBUG: first literal unassigned, all others false.
-    check(value(lits[0]) == 0) { "hyper_binary_resolve: lits[0] assigned" }
-    k = 1
-    while (k != end) {
-        check(value(lits[k]) < 0) { "hyper_binary_resolve: literal not false" }
-        k++
-    }
-    check(variable(lits[1]).level == 1) { "hyper_binary_resolve: lits[1] level" }
+    // '#ifndef NDEBUG' check (first literal unassigned, all others false): not in release.
     stats.hbrs++
     stats.hbrsizes += reason.size
     val lit = lits[1]

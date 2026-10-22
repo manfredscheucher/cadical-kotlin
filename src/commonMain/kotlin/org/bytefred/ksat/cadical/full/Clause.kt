@@ -186,9 +186,7 @@ internal fun Internal.shrinkClause(c: Clause, newSize: Int): Int {
     check(newSize >= 2) { "shrink_clause to size $newSize" }
     val oldSize = c.size
     check(newSize < oldSize) { "shrink_clause does not shrink" }
-    // '#ifndef NDEBUG' loop from 'c->size' to 'new_size' (never iterates, since
-    // 'new_size < c->size').
-    for (i in c.size until newSize) c.literals[i] = 0
+    // '#ifndef NDEBUG' loop from 'c->size' to 'new_size' (never iterates): not in release.
 
     if (c.pos >= newSize) c.pos = 2
 
@@ -462,7 +460,7 @@ internal fun Internal.addNewOriginalClause(id: Long) {
             }
         } else {
             moveLiteralsToWatch()
-            checkWatchedLiteralInvariants() // '#ifndef NDEBUG' check
+            // '#ifndef NDEBUG' upstream: 'check_watched_literal_invariants ()', not in release.
             val glue = learnedLevels.size + unassigned
             check(glue <= clause.size)
             val clauseRedundancy = fromPropagator && extClauseForgettable
@@ -486,11 +484,7 @@ internal fun Internal.addNewOriginalClause(id: Long) {
 //
 internal fun Internal.newLearnedRedundantClause(glue: Int): Clause {
     check(clause.size > 1)
-    // '#ifndef NDEBUG'
-    for (i in 2 until clause.size) {
-        check(variable(clause[0]).level >= variable(clause[i]).level)
-        check(variable(clause[1]).level >= variable(clause[i]).level)
-    }
+    // '#ifndef NDEBUG' level order check of the learned clause: not in release.
     external!!.checkLearnedClause()
     val res = newClause(true, glue)
     val p = proof

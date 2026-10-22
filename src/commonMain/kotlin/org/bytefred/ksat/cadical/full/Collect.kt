@@ -413,22 +413,7 @@ internal fun Internal.copyNonGarbageClauses() {
 // statistics are updated correctly.
 
 internal fun Internal.checkClauseStats() {
-    // '#ifndef NDEBUG'
-    var irredundant = 0L
-    var redundant = 0L
-    var total = 0L
-    var irrlits = 0L
-    for (c in clauses) {
-        if (c.garbage) continue
-        if (c.redundant) redundant++
-        else irredundant++
-        if (!c.redundant) irrlits += c.size
-        total++
-    }
-    check(stats.current.irredundant == irredundant) { "irredundant clause stats" }
-    check(stats.current.redundant == redundant) { "redundant clause stats" }
-    check(stats.current.total == total) { "total clause stats" }
-    check(stats.irrlits == irrlits) { "irredundant literal stats" }
+    // The whole body is '#ifndef NDEBUG' upstream: empty in the release reference.
 }
 
 /*------------------------------------------------------------------------*/

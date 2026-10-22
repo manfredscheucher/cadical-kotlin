@@ -18,6 +18,8 @@ internal class IdrupClause(
     val literals: IntArray,
 )
 
+// 'uint64_t nonces[]' -> ULongArray (the 'ExperimentalUnsignedTypes' API).
+@OptIn(ExperimentalUnsignedTypes::class)
 internal class IdrupTracer(
     private var internal: Internal,
     private val file: File,

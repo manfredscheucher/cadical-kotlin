@@ -4,18 +4,13 @@ package org.bytefred.ksat.cadical.full
  * queue.hpp: links of the doubly linked VMTF decision queue and the queue anchors.
  *
  * Mapping: 'Links' (vector<Link>) -> 'ArrayList<Link>' (grown in 'enlarge' with fresh links,
- * which are zero like the value-initialized upstream elements). C++ struct assignment of a
- * link ('links[dst] = links[src]' in 'compact') copies: use [Link.copyFrom].
+ * which are zero like the value-initialized upstream elements). 'links[dst] = links[src]' in
+ * 'compact' moves the reference (no aliasing there, see Compact.kt).
  */
 internal class Link {
     var prev = 0 // variable indices
     var next = 0
     // initialized explicitly in 'init_queue'
-
-    fun copyFrom(other: Link) {
-        prev = other.prev
-        next = other.next
-    }
 }
 
 internal typealias Links = ArrayList<Link>

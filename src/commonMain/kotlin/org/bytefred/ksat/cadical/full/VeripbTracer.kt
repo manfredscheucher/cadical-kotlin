@@ -19,6 +19,8 @@ internal class HashId(
     var id: Long, // id of clause
 )
 
+// 'uint64_t nonces[]' -> ULongArray (the 'ExperimentalUnsignedTypes' API).
+@OptIn(ExperimentalUnsignedTypes::class)
 internal class VeripbTracer(
     private var internal: Internal,
     private val file: File,

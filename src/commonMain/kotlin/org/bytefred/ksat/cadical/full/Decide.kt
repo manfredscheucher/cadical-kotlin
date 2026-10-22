@@ -138,8 +138,7 @@ internal fun Internal.decide(): Int {
 
         val sizeConstraint = constraint.size
 
-        var sum = 0 // unsigned checksum (NDEBUG-only upstream)
-        for (k in 0 until constraint.size) sum += constraint[k]
+        // '#ifndef NDEBUG' upstream: constraint checksum 'sum', not in release.
         for (i in 0 until sizeConstraint) {
 
             // Get literal and move 'constraint[i] = constraint[i-1]'.
@@ -206,8 +205,7 @@ internal fun Internal.decide(): Int {
             }
         }
 
-        for (k in 0 until constraint.size) sum -= constraint[k]
-        check(sum == 0) { "constraint checksum changed" } // Checksum of literal should not change!
+        // '#ifndef NDEBUG' upstream: constraint checksum check, not in release.
 
     } else {
 

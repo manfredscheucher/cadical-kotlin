@@ -262,7 +262,6 @@ Rules applied (see PORTING.md for the general type mapping):
 | external_propagate.cpp | `void connect_propagator ()` | `Internal.connectPropagator(): Unit` |
 | external_propagate.cpp | `void mark_garbage_external_forgettable (int64_t id)` | `Internal.markGarbageExternalForgettable(id: Long): Unit` |
 | external_propagate.cpp | `bool is_external_forgettable (int64_t id)` | `Internal.isExternalForgettable(id: Long): Boolean` |
-| external_propagate.cpp | `void get_all_fixed_literals (std::vector<int> &)` | `Internal.getAllFixedLiterals(fixedLits: IntArrayList): Unit` |
 | flags.cpp | `void reactivate (int lit)` | `Internal.reactivate(lit: Int): Unit` |
 | flags.cpp | `void mark_eliminated (int)` | `Internal.markEliminated(lit: Int): Unit` |
 | flags.cpp | `void mark_substituted (int)` | `Internal.markSubstituted(lit: Int): Unit` |

@@ -52,7 +52,11 @@ internal fun Internal.lookaheadPopulateLocc(): IntArrayList {
 internal fun Internal.lookaheadLocc(loccs: IntArrayList): Int {
     for (k in 0 until loccs.size) {
         val lit = loccs[k]
-        if (active(abs(lit)) && !assumed(lit) && !assumed(-lit) && value(lit) == 0) return lit
+        // 'loccs' includes the entry for literal 0 (index 0 of 'lookahead_populate_locc').
+        // Upstream 'active (0)' reads 'ftab[0]' through 'vidx', whose 'assert (lit)' is
+        // compiled out in release: 'ftab[0]' is an UNUSED 'Flags', so 0 is simply not active
+        // (well defined, no UB). Read 'ftab' directly to keep this release behaviour.
+        if (ftab[abs(lit)].active() && !assumed(lit) && !assumed(-lit) && value(lit) == 0) return lit
     }
     return 0
 }
@@ -450,10 +454,8 @@ internal fun Internal.generateCubes(depth: Int, minDepth: Int): CubesWithStatus 
         if (terminatingAsked() && i >= minDepth) break
     }
 
-    // 'assert (std::for_each (..., [] (cube) { return non_tautological_cube (cube); }))'
-    // is vacuous upstream: 'for_each' returns the (captureless) lambda, which converts to a
-    // non-null function pointer. The calls have no side effects.
-    for (cube in cubes) nonTautologicalCube(cube)
+    // 'assert (std::for_each (..., non_tautological_cube ...))' is only inside an assert
+    // upstream: not evaluated in release.
     resetAssumptions()
 
     for (k in 0 until currentAssumptions.size) assume(currentAssumptions[k])
