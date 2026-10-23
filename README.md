@@ -4,7 +4,10 @@ A [Kotlin Multiplatform](https://kotlinlang.org/docs/multiplatform.html) port of
 **CaDiCaL** SAT solver (Armin Biere and contributors). Plain Kotlin, no FFI and no native library, so it
 runs on any Kotlin target (JVM, Android, native, browser).
 
-The CaDiCaL search core (CDCL only, not the inprocessing machinery). `double` activities and EMAs are computed in the same order as the C.
+All of CaDiCaL 2.1.3: the CDCL search, every inprocessing technique, the incremental and
+IPASIR-UP API, model reconstruction and the proof tracers/checkers. The upstream `Solver` API
+is a 1:1 translation in package `org.bytefred.ksat.cadical.full`; the class
+`org.bytefred.ksat.cadical.CaDiCaL` puts the ksat-common `SatSolver` interfaces on top of it.
 
 It implements the `SatSolver` interface from
 [ksat-common](https://github.com/manfredscheucher/ksat-common), which is pulled in as a
