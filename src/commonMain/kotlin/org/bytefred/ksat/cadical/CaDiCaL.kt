@@ -9,6 +9,7 @@ import org.bytefred.ksat.ForcedPhases
 import org.bytefred.ksat.SatResult
 import org.bytefred.ksat.SatSolver
 import org.bytefred.ksat.Traceable
+import org.bytefred.ksat.cadical.full.Options
 import org.bytefred.ksat.cadical.full.SATISFIABLE
 import org.bytefred.ksat.cadical.full.Solver
 import org.bytefred.ksat.cadical.full.TraceSink
@@ -45,6 +46,9 @@ import org.bytefred.ksat.cadical.full.UNSATISFIABLE
  *
  * [Traceable]: the sink gets the full port's trace lines (the format shared with the
  * instrumented upstream reference in ksat-extra/shadow/cadical-full).
+ *
+ * Options: [setOption] / [getOption] are `set (name, val)` / `get (name)`; [optionTable] lists
+ * upstream's options table (options.hpp) with defaults, ranges and descriptions.
  */
 class CaDiCaL(
     numVarsHint: Int = 0,
@@ -112,4 +116,29 @@ class CaDiCaL(
     // ---- copy ----
 
     override fun copy(): CaDiCaL = CaDiCaL().also { solver.copy(it.solver) }
+
+    // ---- options ----
+
+    /**
+     * Upstream `set (name, val)`; as upstream only right after construction (before any clause).
+     * Unlike upstream, which returns false for an unknown name and clamps a value outside the
+     * option's range to that range, both throw [IllegalArgumentException] here.
+     */
+    fun setOption(name: String, value: Int) {
+        val o = Options.has(name) ?: throw IllegalArgumentException("unknown CaDiCaL option '$name'")
+        require(value in o.lo..o.hi) { "CaDiCaL option '$name': value $value outside ${o.lo}..${o.hi}" }
+        require(solver.set(name, value))
+    }
+
+    /** Upstream `get (name)`: the current value of option [name] (0 for an unknown name, as upstream). */
+    fun getOption(name: String): Int = solver.get(name)
+
+    companion object {
+        /** Upstream's options table (options.hpp), in its order (sorted by name). */
+        val optionTable: List<CaDiCaLOption>
+            get() = Options.table.map { CaDiCaLOption(it.name, it.def, it.lo, it.hi, it.description) }
+    }
 }
+
+/** One row of upstream's options table (options.hpp): name, default, range and description. */
+class CaDiCaLOption(val name: String, val default: Int, val min: Int, val max: Int, val description: String)
